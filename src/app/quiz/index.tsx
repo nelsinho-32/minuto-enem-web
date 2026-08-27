@@ -1,23 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions, 
-  StyleProp, ViewStyle, TextStyle, ActivityIndicator 
+  StyleProp, ViewStyle, TextStyle, ActivityIndicator, ScrollView, Image 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router'; // Adicionamos useLocalSearchParams
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { FontAwesome5 } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 
-const { width } = Dimensions.get('window');
-const TIME_PER_QUESTION = 180; 
-
-// SEU IP AQUI: Mantenha o que estava funcionando para você!
+const { width, height } = Dimensions.get('window');
 const API_URL = 'http://192.168.1.15:3333/api/questions';
 
 export default function QuizScreen() {
   const router = useRouter();
-  // MÁGICA 1: Pega o parâmetro de modo de jogo da URL (ex: ?mode=tiro_curto)
-  const { limit, difficulty, day } = useLocalSearchParams<{ limit: string, difficulty: string, day: string }>();
+  
+  const params = useLocalSearchParams();
+  const day = params.day as string;
+  const difficulty = params.difficulty as string;
+  
+  const parsedLimit = params.limit ? Number(params.limit) : 10;
+  const initialTimeInSeconds = params.time ? Number(params.time) * 60 : parsedLimit * 180;
 
   const [quizQuestions, setQuizQuestions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -27,9 +29,8 @@ export default function QuizScreen() {
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
   
-  const [timeLeft, setTimeLeft] = useState(TIME_PER_QUESTION);
-  const [isTimeUp, setIsTimeUp] = useState(false);
-  const [timeSpent, setTimeSpent] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(initialTimeInSeconds);
+  const [totalTime] = useState(initialTimeInSeconds);
 
   useEffect(() => {
     async function fetchQuestions() {
@@ -37,104 +38,93 @@ export default function QuizScreen() {
         const response = await fetch(API_URL);
         if (!response.ok) throw new Error('Falha ao conectar na API');
         
-        const data = await response.json();
-        
-        // 2. Aplicando o Filtro do Dia do ENEM
-        let filteredData = data;
+        let data = await response.json();
         
         if (day === '1') {
-          // 1º Dia: Linguagens e Humanas
-          filteredData = filteredData.filter((q: any) => 
+          data = data.filter((q: any) => 
             q.area.toLowerCase().includes('humanas') || 
-            q.area.toLowerCase().includes('linguagens')
+            q.area.toLowerCase().includes('linguagens') ||
+            q.area.toLowerCase().includes('ch') || 
+            q.area.toLowerCase().includes('lc')
           );
         } else if (day === '2') {
-          // 2º Dia: Natureza e Matemática
-          filteredData = filteredData.filter((q: any) => 
+          data = data.filter((q: any) => 
             q.area.toLowerCase().includes('natureza') || 
             q.area.toLowerCase().includes('matemática') || 
-            q.area.toLowerCase().includes('matematica')
+            q.area.toLowerCase().includes('cn') || 
+            q.area.toLowerCase().includes('mt')
           );
         }
 
-        // 3. Aplicando o Filtro de Dificuldade baseado na Taxa de Erro (TRI)
         if (difficulty === 'facil') {
-          // Menos de 40% de erro
-          filteredData = filteredData.filter((q: any) => q.errorRate < 40);
+          data = data.filter((q: any) => q.errorRate && q.errorRate < 45);
         } else if (difficulty === 'medio') {
-          // Entre 40% e 70% de erro
-          filteredData = filteredData.filter((q: any) => q.errorRate >= 40 && q.errorRate <= 70);
+          data = data.filter((q: any) => q.errorRate && q.errorRate >= 45 && q.errorRate <= 65);
         } else if (difficulty === 'dificil') {
-          // Mais de 70% de erro
-          filteredData = filteredData.filter((q: any) => q.errorRate > 70);
+          data = data.filter((q: any) => q.errorRate && q.errorRate > 65);
         }
-        // Se for 'misto', ignora esse bloco e traz tudo!
 
-        // 4. Embaralha o resultado filtrado
-        const shuffled = filteredData.sort(() => 0.5 - Math.random());
-        
-        // 5. Aplica a quantidade limite do botão clicado
-        const questionLimit = limit ? parseInt(limit, 10) : 10;
-        setQuizQuestions(shuffled.slice(0, questionLimit));
+        const shuffled = data.sort(() => 0.5 - Math.random());
+        setQuizQuestions(shuffled.slice(0, parsedLimit));
 
       } catch (err) {
-        setError('Não foi possível carregar as questões.');
+        setError('Não foi possível carregar as questões. Verifique o IP da API.');
       } finally {
         setIsLoading(false);
       }
     }
 
     fetchQuestions();
-  }, [limit, difficulty, day]);
-  
+  }, [day, difficulty, parsedLimit]);
+
+  // CRONÔMETRO OFICIAL: Roda solto e não pausa por nada, até chegar a zero!
   useEffect(() => {
-    if (isLoading || isAnswered || isTimeUp || quizQuestions.length === 0) return;
+    if (isLoading || timeLeft <= 0 || quizQuestions.length === 0) return;
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          handleTimeOut();
-          return 0;
+          return 0; // Para no zero exato
         }
         return prev - 1;
       });
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isLoading, isAnswered, isTimeUp, quizQuestions]);
-
-  const handleTimeOut = () => {
-    setIsTimeUp(true);
-    setIsAnswered(true);
-    setTimeSpent(TIME_PER_QUESTION);
-  };
+  }, [isLoading, quizQuestions.length, timeLeft]);
 
   const handleSelectOption = (index: number) => {
-    if (isAnswered) return; 
+    if (isAnswered || timeLeft === 0) return; // Trava o clique se o tempo acabou
     setSelectedOption(index);
     setIsAnswered(true);
-    setTimeSpent(TIME_PER_QUESTION - timeLeft); 
   };
 
   const handleNext = () => {
-    if (currentQuestionIdx === quizQuestions.length - 1) {
+    if (timeLeft === 0 || currentQuestionIdx === quizQuestions.length - 1) {
       router.replace('/');
       return;
     }
     setCurrentQuestionIdx((prev) => prev + 1);
     setSelectedOption(null);
     setIsAnswered(false);
-    setIsTimeUp(false);
-    setTimeLeft(TIME_PER_QUESTION);
-    setTimeSpent(0);
+  };
+
+  // Botão "Responder Depois"
+  const handleSkipLater = () => {
+    setQuizQuestions((prev) => {
+      const updatedArray = [...prev];
+      const skippedQuestion = updatedArray.splice(currentQuestionIdx, 1)[0];
+      updatedArray.push(skippedQuestion);
+      return updatedArray;
+    });
   };
 
   if (isLoading) {
     return (
       <SafeAreaView style={[styles.container, styles.centerAll]}>
         <ActivityIndicator size="large" color="#1CB0F6" />
-        <Text style={styles.loadingText}>Preparando seu treino...</Text>
+        <Text style={styles.loadingText}>Preparando sua prova...</Text>
       </SafeAreaView>
     );
   }
@@ -143,7 +133,7 @@ export default function QuizScreen() {
     return (
       <SafeAreaView style={[styles.container, styles.centerAll]}>
         <FontAwesome5 name="exclamation-triangle" size={40} color="#FF4B4B" style={{marginBottom: 16}} />
-        <Text style={styles.errorText}>{error || 'Nenhuma questão encontrada.'}</Text>
+        <Text style={styles.errorText}>{error || 'Nenhuma questão encontrada para estes filtros.'}</Text>
         <TouchableOpacity style={styles.retryButton} onPress={() => router.back()}>
           <Text style={styles.retryText}>Voltar</Text>
         </TouchableOpacity>
@@ -154,10 +144,13 @@ export default function QuizScreen() {
   const question = quizQuestions[currentQuestionIdx];
   const isLastQuestion = currentQuestionIdx === quizQuestions.length - 1;
 
-  const timePercentage = (timeLeft / TIME_PER_QUESTION) * 100;
+  if (!question) return null;
+
+  const timePercentage = (timeLeft / totalTime) * 100;
+  
   let timerColor = '#58CC02'; 
-  if (timeLeft < 60) timerColor = '#F1C40F'; 
-  if (timeLeft < 15) timerColor = '#FF4B4B'; 
+  if (timePercentage < 25) timerColor = '#F1C40F'; 
+  if (timeLeft === 0 || timePercentage < 10) timerColor = '#FF4B4B'; 
 
   const minutes = Math.floor(timeLeft / 60);
   const seconds = timeLeft % 60;
@@ -190,16 +183,33 @@ export default function QuizScreen() {
         </View>
       </View>
 
-      <View style={styles.content}>
+      <ScrollView 
+        style={styles.content} 
+        contentContainerStyle={{ paddingBottom: 160 }}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.questionBox}>
           <View style={styles.tagsRow}>
             <Text style={styles.subjectLabel}>{question.subject}</Text>
             <Text style={styles.yearLabel}>ENEM {question.year}</Text>
           </View>
           
-          {/* MÁGICA 4: O "|| ' '" garante que nunca será undefined, evitando o travamento da tela! */}
-          <Markdown style={markdownStyles as any}>
-            {question.text || ' '}
+          <Markdown 
+            style={markdownStyles as any}
+            rules={{
+              image: (node) => {
+                return (
+                  <Image
+                    key={node.key}
+                    source={{ uri: node.attributes.src }}
+                    style={{ width: width - 40, height: height * 0.35, marginVertical: 16 }}
+                    resizeMode="contain"
+                  />
+                );
+              }
+            }}
+          >
+            {(question.text || ' ').replace(/\]\(\/\//g, '](https://')}
           </Markdown>
         </View>
 
@@ -229,7 +239,7 @@ export default function QuizScreen() {
                 style={optionStyle}
                 activeOpacity={0.7}
                 onPress={() => handleSelectOption(index)}
-                disabled={isAnswered}
+                disabled={isAnswered || timeLeft === 0}
               >
                 <Text style={optionTextStyle}>{opt}</Text>
                 
@@ -239,30 +249,59 @@ export default function QuizScreen() {
             );
           })}
         </View>
-      </View>
 
-      {isAnswered && (
+        {/* BOTÃO RESPONDER DEPOIS - Some se o tempo acabar */}
+        {!isAnswered && !isLastQuestion && timeLeft > 0 && (
+          <TouchableOpacity style={styles.skipButton} onPress={handleSkipLater}>
+            <Text style={styles.skipButtonText}>Responder depois</Text>
+            <FontAwesome5 name="angle-double-right" size={14} color="#8CA0B3" />
+          </TouchableOpacity>
+        )}
+      </ScrollView>
+
+      {/* EVENTO DO FISCAL: Tempo Esgotado */}
+      {timeLeft === 0 && !isAnswered && (
+        <View style={[styles.feedbackBottomSheet, styles.feedbackWrongBg]}>
+          <View style={styles.feedbackHeader}>
+            <View style={styles.feedbackTitleRow}>
+              <FontAwesome5 name="clock" size={24} color="#FF4B4B" />
+              <Text style={[styles.feedbackTitle, { color: '#FF4B4B' }]}>
+                O Fiscal recolheu a prova!
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.feedbackExplanation}>
+            Seu tempo oficial esgotou. A gestão de tempo é um dos maiores desafios do ENEM, continue treinando sua agilidade!
+          </Text>
+          <TouchableOpacity style={styles.continueButton} onPress={() => router.replace('/')}>
+            <Text style={styles.continueButtonText}>Finalizar Treino</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* FEEDBACK NORMAL DA QUESTÃO */}
+      {isAnswered && timeLeft > 0 && (
         <View style={[
           styles.feedbackBottomSheet, 
-          isTimeUp ? styles.feedbackWrongBg : (selectedOption === question.correctAnswer ? styles.feedbackCorrectBg : styles.feedbackWrongBg)
+          selectedOption === question.correctAnswer ? styles.feedbackCorrectBg : styles.feedbackWrongBg
         ]}>
           <View style={styles.feedbackHeader}>
             <View style={styles.feedbackTitleRow}>
               <FontAwesome5 
-                name={isTimeUp ? "clock" : (selectedOption === question.correctAnswer ? "check-circle" : "times-circle")} 
+                name={selectedOption === question.correctAnswer ? "check-circle" : "times-circle"} 
                 size={24} 
-                color={isTimeUp ? "#FF4B4B" : (selectedOption === question.correctAnswer ? "#58CC02" : "#FF4B4B")} 
+                color={selectedOption === question.correctAnswer ? "#58CC02" : "#FF4B4B"} 
               />
               <Text style={[
                 styles.feedbackTitle, 
-                { color: isTimeUp ? "#FF4B4B" : (selectedOption === question.correctAnswer ? "#58CC02" : "#FF4B4B") }
+                { color: selectedOption === question.correctAnswer ? "#58CC02" : "#FF4B4B" }
               ]}>
-                {isTimeUp ? 'Tempo Esgotado!' : (selectedOption === question.correctAnswer ? 'Mandou Bem!' : 'Acontece, vamos revisar!')}
+                {selectedOption === question.correctAnswer ? 'Mandou Bem!' : 'Acontece, vamos revisar!'}
               </Text>
             </View>
           </View>
 
-          {(!isTimeUp && selectedOption !== question.correctAnswer && question.errorRate) && (
+          {selectedOption !== question.correctAnswer && question.errorRate && (
             <View style={styles.inepStatBox}>
               <FontAwesome5 name="chart-pie" size={14} color="#8CA0B3" />
               <Text style={styles.inepStatText}>
@@ -276,7 +315,7 @@ export default function QuizScreen() {
 
           <TouchableOpacity style={styles.continueButton} onPress={handleNext}>
             <Text style={styles.continueButtonText}>
-              {isLastQuestion ? 'Finalizar Treino' : 'Continuar'}
+              {isLastQuestion ? 'Finalizar Treino' : 'Próxima Questão'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -287,9 +326,8 @@ export default function QuizScreen() {
 }
 
 const markdownStyles = StyleSheet.create({
-  body: { fontSize: 17, color: '#2C3A47', lineHeight: 26 },
-  image: { width: '100%', height: 250, resizeMode: 'contain', marginTop: 10, marginBottom: 10 },
-  p: { marginBottom: 10 }
+  body: { fontSize: 16, color: '#2C3A47', lineHeight: 24 },
+  p: { marginBottom: 12 }
 });
 
 const styles = StyleSheet.create({
@@ -331,6 +369,9 @@ const styles = StyleSheet.create({
   optionTextCorrect: { color: '#3A8A00' },
   optionWrong: { backgroundColor: '#FFF5F5', borderColor: '#FF4B4B' },
   optionTextWrong: { color: '#C40000' },
+
+  skipButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 24, paddingVertical: 12, gap: 8 },
+  skipButtonText: { color: '#8CA0B3', fontSize: 15, fontWeight: 'bold' },
 
   feedbackBottomSheet: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
