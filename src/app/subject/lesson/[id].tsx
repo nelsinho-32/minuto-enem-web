@@ -1,352 +1,189 @@
-import React from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Image,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter, useLocalSearchParams } from "expo-router";
-import { FontAwesome5 } from "@expo/vector-icons";
+import React, { useState, useEffect } from 'react';
+import { 
+  View, Text, StyleSheet, TouchableOpacity, Dimensions, 
+  ActivityIndicator, ScrollView, Image, Linking 
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { FontAwesome5 } from '@expo/vector-icons';
+import Markdown from 'react-native-markdown-display';
 
-// MOCK: BANCO DE DADOS DA AULA
-const LESSON_DB: Record<string, any> = {
-  "1": {
-    title: "Matemática Básica",
-    subject: "Matemática",
-    color: "#FF4B4B",
-    videos: [
-      {
-        id: "v1",
-        title: "Regra de Três Simples e Composta",
-        duration: "15:20",
-        thumbColor: "#2C3A47",
-      },
-      {
-        id: "v2",
-        title: "Porcentagem do Zero",
-        duration: "22:10",
-        thumbColor: "#34495E",
-      },
-      {
-        id: "v3",
-        title: "Frações e Decimais",
-        duration: "18:45",
-        thumbColor: "#1A252F",
-      },
-    ],
-    theory:
-      'A Matemática Básica é o alicerce para todas as outras áreas cobradas no ENEM. O domínio de frações, porcentagens e proporções não apenas garante acertos fáceis, mas acelera a resolução de questões de Química e Física.\n\nPorcentagem significa "por cento" (dividido por 100). É uma razão onde o denominador é sempre 100. Compreender que 20% é o mesmo que 0,2 ou 1/5 salva um tempo precioso no segundo dia de prova.',
-    examples: [
-      {
-        question:
-          "Se um produto custa R$ 120 e tem 15% de desconto, qual o valor final?",
-        resolution:
-          "1. Calcule 10% de 120 = 12\n2. Calcule 5% (metade de 10%) = 6\n3. Desconto total = 12 + 6 = 18\n4. Valor final = 120 - 18 = R$ 102,00.",
-      },
-    ],
-    references: [
-      "IEZZI, Gelson. Fundamentos de Matemática Elementar. Volume 11.",
-      "BRASIL. Ministério da Educação. Matriz de Referência ENEM.",
-    ],
-  },
-  // O fallback caso não encontre
-  fallback: {
-    title: "Cinemática",
-    subject: "Física",
-    color: "#58CC02",
-    videos: [
-      {
-        id: "v1",
-        title: "Movimento Retilíneo Uniforme",
-        duration: "12:00",
-        thumbColor: "#2C3A47",
-      },
-    ],
-    theory: "Estudo do movimento dos corpos sem se preocupar com suas causas.",
-    examples: [
-      { question: "Fórmula da Velocidade?", resolution: "V = ΔS / Δt" },
-    ],
-    references: ["Referência Genérica"],
-  },
-};
+const { width, height } = Dimensions.get('window');
+
+// Lembre-se de colocar o seu IP atual aqui!
+const API_URL = 'http://192.168.1.12:3333/api/lessons';
 
 export default function LessonScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
 
-  // Pega a aula pelo ID (ou usa o fallback para evitar erros)
-  const lesson = LESSON_DB[id || "1"] || LESSON_DB["fallback"];
+  const [lesson, setLesson] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchLesson() {
+      try {
+        const response = await fetch(`${API_URL}/${id}`);
+        if (response.ok) {
+          const data = await response.json();
+          setLesson(data);
+        }
+      } catch (err) {
+        console.error("Erro ao buscar aula:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    if (id) fetchLesson();
+  }, [id]);
+
+  if (isLoading || !lesson) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centerAll]}>
+        <ActivityIndicator size="large" color="#CE82FF" />
+      </SafeAreaView>
+    );
+  }
+
+  // Função para abrir o vídeo direto no app do YouTube do celular
+  const openYouTube = (query: string) => {
+    const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    Linking.openURL(url).catch(err => console.error("Erro ao abrir YouTube:", err));
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* 1. HEADER */}
+      
+      {/* ========================================== */}
+      {/* 1. CABEÇALHO SUPERIOR */}
+      {/* ========================================== */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <FontAwesome5 name="arrow-left" size={20} color="#2C3A47" />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>
-          {lesson.subject}
+          {lesson.subject?.name || 'Aula'}
         </Text>
-        <TouchableOpacity
-          style={styles.notesButton}
-          onPress={() => router.push("/notes/new" as any)}
-        >
-          <FontAwesome5 name="pen" size={16} color={lesson.color} />
-        </TouchableOpacity>
+        <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* TÍTULO DA AULA */}
-        <Text style={styles.lessonTitle}>{lesson.title}</Text>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        
+        <View style={styles.titleContainer}>
+          <Text style={styles.lessonTitle}>{lesson.title}</Text>
+          <View style={styles.divider} />
+        </View>
 
-        {/* 2. CARROSSEL DE VÍDEOS */}
-        <Text style={styles.sectionLabel}>Videoaulas Recomendadas</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.videoScroll}
+        {/* ========================================== */}
+        {/* 2. ONDE ASSISTIR (CARROSSEL DE VÍDEOS) */}
+        {/* ========================================== */}
+        {lesson.videos && lesson.videos.length > 0 && (
+          <View style={styles.carouselSection}>
+            <Text style={styles.sectionSubtitle}>Onde Assistir</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.carouselContainer}>
+              {lesson.videos.map((video: string, idx: number) => (
+                <TouchableOpacity key={idx} style={styles.videoCard} activeOpacity={0.8} onPress={() => openYouTube(video)}>
+                  <View style={styles.videoThumbnail}>
+                    <FontAwesome5 name="youtube" size={32} color="#FF0000" />
+                  </View>
+                  <Text style={styles.videoTitle} numberOfLines={3}>{video}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* ========================================== */}
+        {/* 3. ASSUNTO DO CONTEÚDO (MARKDOWN) */}
+        {/* ========================================== */}
+        <View style={styles.markdownWrapper}>
+          <Markdown 
+            style={markdownStyles as any}
+            rules={{
+              image: (node) => (
+                <View key={node.key} style={styles.imageContainer}>
+                  <Image source={{ uri: node.attributes.src }} style={{ width: width - 48, height: height * 0.25 }} resizeMode="cover" />
+                </View>
+              )
+            }}
+          >
+            {lesson.content}
+          </Markdown>
+        </View>
+
+        {/* ========================================== */}
+        {/* 4. OPÇÃO DE PRÁTICA (DIRETO PRO QUIZ) */}
+        {/* ========================================== */}
+        <TouchableOpacity 
+          style={styles.practiceButton} 
+          activeOpacity={0.8}
+          onPress={() => router.push({
+            pathname: '/quiz',
+            params: { mode: 'pratica', subject: lesson.subject?.slug, limit: 10 }
+          })}
         >
-          {lesson.videos.map((video: any) => (
-            <TouchableOpacity
-              key={video.id}
-              style={styles.videoCard}
-              activeOpacity={0.8}
-            >
-              <View
-                style={[
-                  styles.videoThumbnail,
-                  { backgroundColor: video.thumbColor },
-                ]}
-              >
-                <FontAwesome5 name="play" size={24} color="#FFF" />
-                <View style={styles.durationBadge}>
-                  <Text style={styles.durationText}>{video.duration}</Text>
-                </View>
-              </View>
-              <Text style={styles.videoTitle} numberOfLines={2}>
-                {video.title}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+          <FontAwesome5 name="dumbbell" size={20} color="#FFF" />
+          <Text style={styles.practiceButtonText}>Praticar este Assunto</Text>
+        </TouchableOpacity>
 
-        <View style={styles.divider} />
-
-        {/* 3. TEORIA (CONTEÚDO ESCRITO) */}
-        <Text style={styles.sectionLabel}>Teoria Completa</Text>
-        <Text style={styles.theoryText}>{lesson.theory}</Text>
-
-        {/* 4. EXEMPLOS RESOLVIDOS */}
-        {lesson.examples.length > 0 && (
-          <View style={styles.examplesContainer}>
-            <View style={styles.examplesHeader}>
-              <FontAwesome5 name="lightbulb" size={18} color="#F1C40F" solid />
-              <Text style={styles.examplesTitle}>Exemplo Prático</Text>
-            </View>
-
-            {lesson.examples.map((ex: any, idx: number) => (
-              <View key={idx} style={styles.exampleBlock}>
-                <Text style={styles.exampleQuestion}>Q: {ex.question}</Text>
-                <View style={styles.exampleResolutionBox}>
-                  <Text style={styles.exampleResolutionLabel}>Resolução:</Text>
-                  <Text style={styles.exampleResolutionText}>
-                    {ex.resolution}
-                  </Text>
-                </View>
+        {/* ========================================== */}
+        {/* 5. REFERÊNCIAS BIBLIOGRÁFICAS */}
+        {/* ========================================== */}
+        {lesson.references && lesson.references.length > 0 && (
+          <View style={styles.referencesSection}>
+            <Text style={styles.sectionSubtitle}>Referências</Text>
+            {lesson.references.map((ref: string, idx: number) => (
+              <View key={idx} style={styles.refItem}>
+                <FontAwesome5 name="book" size={14} color="#8CA0B3" style={{ marginTop: 4 }} />
+                <Text style={styles.refText}>{ref}</Text>
               </View>
             ))}
           </View>
         )}
 
-        <View style={styles.divider} />
-
-        {/* 5. REFERÊNCIAS */}
-        <View style={styles.referencesContainer}>
-          <Text style={styles.referencesTitle}>
-            Referências Bibliográficas:
-          </Text>
-          {lesson.references.map((ref: string, idx: number) => (
-            <Text key={idx} style={styles.referenceItem}>
-              • {ref}
-            </Text>
-          ))}
-        </View>
-
-        {/* 6. BOTÃO DE PRÁTICA */}
-        <TouchableOpacity
-          style={[styles.practiceButton, { backgroundColor: lesson.color }]}
-          activeOpacity={0.8}
-          onPress={() => router.push("/quiz" as any)}
-        >
-          <FontAwesome5 name="dumbbell" size={16} color="#FFF" />
-          <Text style={styles.practiceButtonText}>Treinar este Assunto</Text>
-        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+const markdownStyles = StyleSheet.create({
+  body: { fontSize: 16, color: '#4B5563', lineHeight: 26 },
+  heading2: { fontSize: 20, fontWeight: 'bold', color: '#2C3A47', marginTop: 24, marginBottom: 12 },
+  strong: { color: '#2C3A47', fontWeight: '900' },
+  em: { fontStyle: 'italic', color: '#8CA0B3' },
+  bullet_list: { marginTop: 10, marginBottom: 10 },
+  list_item: { marginBottom: 8, lineHeight: 24 },
+});
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFF" }, // Fundo branco para leitura agradável
+  container: { flex: 1, backgroundColor: '#FFF' },
+  centerAll: { justifyContent: 'center', alignItems: 'center', padding: 20 },
+  
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 15, borderBottomWidth: 1, borderColor: '#F1F5F9' },
+  backButton: { width: 40, height: 40, justifyContent: 'center' },
+  headerTitle: { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: 'bold', color: '#8CA0B3', textTransform: 'uppercase' },
+  
+  scrollContent: { padding: 24, paddingBottom: 60 },
+  
+  titleContainer: { marginBottom: 24 },
+  lessonTitle: { fontSize: 26, fontWeight: '900', color: '#2C3A47', lineHeight: 32 },
+  divider: { height: 4, width: 40, backgroundColor: '#CE82FF', borderRadius: 2, marginTop: 16 },
 
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 20,
-    borderBottomWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  backButton: { width: 40, height: 40, justifyContent: "center" },
-  headerTitle: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#8CA0B3",
-    textTransform: "uppercase",
-    flex: 1,
-    textAlign: "center",
-  },
-  notesButton: {
-    width: 40,
-    height: 40,
-    justifyContent: "center",
-    alignItems: "flex-end",
-  },
+  sectionSubtitle: { fontSize: 18, fontWeight: 'bold', color: '#2C3A47', marginBottom: 12, marginTop: 8 },
 
-  scrollContent: { padding: 20, paddingBottom: 60 },
+  carouselSection: { marginBottom: 24, marginHorizontal: -24 },
+  carouselContainer: { paddingHorizontal: 24, gap: 16 },
+  videoCard: { width: 150, backgroundColor: '#F8FAFC', borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' },
+  videoThumbnail: { height: 85, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center' },
+  videoTitle: { padding: 12, fontSize: 13, fontWeight: 'bold', color: '#4B5563', lineHeight: 18 },
 
-  lessonTitle: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#2C3A47",
-    marginBottom: 24,
-  },
-  sectionLabel: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#2C3A47",
-    marginBottom: 16,
-  },
+  markdownWrapper: { flex: 1, marginBottom: 32 },
+  imageContainer: { marginVertical: 16, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' },
 
-  // VÍDEOS
-  videoScroll: { gap: 16, paddingBottom: 10 },
-  videoCard: { width: 220 },
-  videoThumbnail: {
-    height: 120,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  durationBadge: {
-    position: "absolute",
-    bottom: 8,
-    right: 8,
-    backgroundColor: "rgba(0,0,0,0.7)",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  durationText: { color: "#FFF", fontSize: 11, fontWeight: "bold" },
-  videoTitle: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#4B5563",
-    lineHeight: 20,
-  },
+  practiceButton: { flexDirection: 'row', backgroundColor: '#1CB0F6', paddingVertical: 16, borderRadius: 16, justifyContent: 'center', alignItems: 'center', gap: 12, marginBottom: 32, shadowColor: '#1CB0F6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
+  practiceButtonText: { fontSize: 16, fontWeight: 'bold', color: '#FFF', textTransform: 'uppercase' },
 
-  divider: { height: 1, backgroundColor: "#E2E8F0", marginVertical: 32 },
-
-  // TEORIA
-  theoryText: {
-    fontSize: 16,
-    color: "#4B5563",
-    lineHeight: 26,
-    textAlign: "justify",
-  },
-
-  // EXEMPLOS
-  examplesContainer: {
-    marginTop: 32,
-    backgroundColor: "#F8FAFC",
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  examplesHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 16,
-  },
-  examplesTitle: { fontSize: 16, fontWeight: "bold", color: "#2C3A47" },
-  exampleBlock: { marginBottom: 16 },
-  exampleQuestion: {
-    fontSize: 15,
-    fontWeight: "bold",
-    color: "#2C3A47",
-    marginBottom: 12,
-    lineHeight: 22,
-  },
-  exampleResolutionBox: {
-    borderLeftWidth: 3,
-    borderLeftColor: "#F1C40F",
-    paddingLeft: 12,
-  },
-  exampleResolutionLabel: {
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#8CA0B3",
-    textTransform: "uppercase",
-    marginBottom: 4,
-  },
-  exampleResolutionText: { fontSize: 14, color: "#4B5563", lineHeight: 22 },
-
-  // REFERÊNCIAS
-  referencesContainer: {
-    backgroundColor: "#F7F9FC",
-    padding: 16,
-    borderRadius: 12,
-  },
-  referencesTitle: {
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#8CA0B3",
-    textTransform: "uppercase",
-    marginBottom: 8,
-  },
-  referenceItem: {
-    fontSize: 12,
-    color: "#8CA0B3",
-    fontStyle: "italic",
-    marginBottom: 4,
-    lineHeight: 18,
-  },
-
-  // BOTÃO PRÁTICA
-  practiceButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    paddingVertical: 16,
-    borderRadius: 16,
-    marginTop: 40,
-  },
-  practiceButtonText: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#FFF",
-    textTransform: "uppercase",
-  },
+  referencesSection: { backgroundColor: '#F8FAFC', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0' },
+  refItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 12 },
+  refText: { flex: 1, fontSize: 14, color: '#4B5563', lineHeight: 22 }
 });

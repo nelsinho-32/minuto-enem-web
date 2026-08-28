@@ -25,12 +25,12 @@ export default function HomeScreen() {
         Animated.timing(pulseAnim, {
           toValue: 1.2,
           duration: 600,
-          useNativeDriver: Platform.OS !== 'web'
+          useNativeDriver: Platform.OS !== "web",
         }),
         Animated.timing(pulseAnim, {
           toValue: 1,
           duration: 600,
-          useNativeDriver: Platform.OS !== 'web'
+          useNativeDriver: Platform.OS !== "web",
         }),
       ]),
     ).start();
@@ -47,20 +47,42 @@ export default function HomeScreen() {
   ];
 
   const enemSubjects = [
-    { id: 'redacao', name: "Redação", icon: "pen-nib", color: "#1CB0F6" },
-    { id: 'matematica', name: "Matemática", icon: "calculator", color: "#FF4B4B" },
-    { id: 'fisica', name: "Física", icon: "atom", color: "#58CC02" },
-    { id: 'quimica', name: "Química", icon: "flask", color: "#58CC02" },
-    { id: 'biologia', name: "Biologia", icon: "dna", color: "#58CC02" },
-    { id: 'historia', name: "História", icon: "monument", color: "#F1C40F" },
-    { id: 'geografia', name: "Geografia", icon: "globe-americas", color: "#F1C40F" },
-    { id: 'filosofia', name: "Filosofia", icon: "brain", color: "#F1C40F" },
-    { id: 'sociologia', name: "Sociologia", icon: "users", color: "#F1C40F" },
-    { id: 'portugues', name: "Português", icon: "book", color: "#CE82FF" },
-    { id: 'literatura', name: "Literatura", icon: "theater-masks", color: "#CE82FF" },
-    { id: 'artes', name: "Artes", icon: "palette", color: "#CE82FF" },
-    { id: 'ingles', name: "Inglês", icon: "language", color: "#CE82FF" },
-    { id: 'espanhol', name: "Espanhol", icon: "comment-dots", color: "#CE82FF" },
+    {
+      id: "lingua-portuguesa",
+      name: "Português",
+      icon: "book-open",
+      color: "#FF4B4B",
+    },
+    { id: "literatura", name: "Literatura", icon: "book", color: "#FF4B4B" },
+    { id: "artes", name: "Artes", icon: "palette", color: "#FF4B4B" },
+    {
+      id: "ingles-ou-espanhou",
+      name: "Idiomas",
+      icon: "globe",
+      color: "#FF4B4B",
+    },
+    {
+      id: "educacao-fisica",
+      name: "Ed. Física",
+      icon: "running",
+      color: "#FF4B4B",
+    },
+
+    {
+      id: "matematica",
+      name: "Matemática",
+      icon: "calculator",
+      color: "#1CB0F6",
+    },
+
+    { id: "historia", name: "História", icon: "landmark", color: "#FF9600" },
+    { id: "geografia", name: "Geografia", icon: "map", color: "#FF9600" },
+    { id: "filosofia", name: "Filosofia", icon: "brain", color: "#FF9600" },
+    { id: "sociologia", name: "Sociologia", icon: "users", color: "#FF9600" },
+
+    { id: "biologia", name: "Biologia", icon: "leaf", color: "#58CC02" },
+    { id: "quimica", name: "Química", icon: "flask", color: "#58CC02" },
+    { id: "fisica", name: "Física", icon: "atom", color: "#58CC02" },
   ];
 
   return (
@@ -80,13 +102,16 @@ export default function HomeScreen() {
           </View>
 
           {/* Atalho para o Perfil com Foto Dinâmica */}
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.profileButton}
             activeOpacity={0.8}
-            onPress={() => router.push('/profile' as any)}
+            onPress={() => router.push("/profile" as any)}
           >
             {avatar ? (
-              <Image source={{ uri: avatar }} style={styles.headerAvatarImage} />
+              <Image
+                source={{ uri: avatar }}
+                style={styles.headerAvatarImage}
+              />
             ) : (
               <View style={styles.headerAvatarPlaceholder}>
                 <FontAwesome5 name="user" size={14} color="#FFF" />
@@ -153,13 +178,16 @@ export default function HomeScreen() {
               <Text style={styles.addClassText}>+ Código da Turma</Text>
             </TouchableOpacity>
           </View>
-          
+
           <View style={styles.row}>
             {/* Vai para a Tela de Tarefas (Questões) */}
-            <TouchableOpacity 
-              style={[styles.card, { backgroundColor: '#F0F9FF', borderColor: '#BAE6FD' }]} 
-              activeOpacity={0.7} 
-              onPress={() => router.push('/classes/tasks' as any)}
+            <TouchableOpacity
+              style={[
+                styles.card,
+                { backgroundColor: "#F0F9FF", borderColor: "#BAE6FD" },
+              ]}
+              activeOpacity={0.7}
+              onPress={() => router.push("/classes/tasks" as any)}
             >
               <FontAwesome5 name="tasks" size={24} color="#1CB0F6" />
               <Text style={styles.cardTitle}>Tarefas</Text>
@@ -167,10 +195,13 @@ export default function HomeScreen() {
             </TouchableOpacity>
 
             {/* Vai para a Tela de Materiais (Teoria/Vídeos) */}
-            <TouchableOpacity 
-              style={[styles.card, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]} 
-              activeOpacity={0.7} 
-              onPress={() => router.push('/classes/materials' as any)}
+            <TouchableOpacity
+              style={[
+                styles.card,
+                { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0" },
+              ]}
+              activeOpacity={0.7}
+              onPress={() => router.push("/classes/materials" as any)}
             >
               <FontAwesome5 name="folder-open" size={24} color="#8CA0B3" />
               <Text style={styles.cardTitle}>Materiais</Text>
@@ -252,7 +283,7 @@ export default function HomeScreen() {
                 key={index}
                 style={[styles.gridItem, { borderLeftColor: subject.color }]}
                 activeOpacity={0.7}
-                onPress={() => router.push(`/subject/${subject.id || 'matematica'}` as any)}
+                onPress={() => router.push(`/subject/${subject.id}` as any)}
               >
                 <FontAwesome5
                   name={subject.icon}
@@ -291,7 +322,7 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={[styles.analysisCard, { borderLeftColor: "#FF4B4B" }]}
             activeOpacity={0.7}
-            onPress={() => router.push('/stats/errors')}
+            onPress={() => router.push("/stats/errors")}
           >
             <View style={[styles.analysisIcon, { backgroundColor: "#FFE4E6" }]}>
               <FontAwesome5 name="microscope" size={20} color="#FF4B4B" />
@@ -312,25 +343,29 @@ export default function HomeScreen() {
           <Text style={styles.sectionTitle}>Meu Caderno</Text>
           <View style={styles.row}>
             {/* Vai para o Caderno na aba de Questões */}
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.card, styles.notesCard]}
               activeOpacity={0.7}
-              onPress={() => router.push('/notes?tab=questions' as any)}
->
+              onPress={() => router.push("/notes?tab=questions" as any)}
+            >
               <FontAwesome5 name="bookmark" size={24} color="#F1C40F" />
               <Text style={styles.cardTitle}>Por Questão</Text>
-              <Text style={styles.cardSub}>Macetes salvos direto na resolução.</Text>
+              <Text style={styles.cardSub}>
+                Macetes salvos direto na resolução.
+              </Text>
             </TouchableOpacity>
 
             {/* Vai para o Caderno na aba de Resumos Gerais */}
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.card, styles.notesCard]}
               activeOpacity={0.7}
-              onPress={() => router.push('/notes?tab=general' as any)}
+              onPress={() => router.push("/notes?tab=general" as any)}
             >
               <FontAwesome5 name="book-open" size={24} color="#8CA0B3" />
               <Text style={styles.cardTitle}>Gerais</Text>
-              <Text style={styles.cardSub}>Resumos teóricos e fórmulas exatas.</Text>
+              <Text style={styles.cardSub}>
+                Resumos teóricos e fórmulas exatas.
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -532,24 +567,67 @@ const styles = StyleSheet.create({
   cardSub: { fontSize: 12, color: "#8CA0B3", lineHeight: 16 },
 
   // NOVOS ESTILOS: SALA DE AULA
-  addClassText: { fontSize: 14, fontWeight: 'bold', color: '#1CB0F6' },
-  assignmentCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 16, borderRadius: 16, marginBottom: 10, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  assignmentIconBox: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#FF4B4B', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  addClassText: { fontSize: 14, fontWeight: "bold", color: "#1CB0F6" },
+  assignmentCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF",
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  assignmentIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#FF4B4B",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
   assignmentInfo: { flex: 1, paddingRight: 10 },
-  assignmentTitle: { fontSize: 15, fontWeight: 'bold', color: '#2C3A47', marginBottom: 2 },
-  assignmentSub: { fontSize: 12, color: '#8CA0B3' },
-  assignmentAction: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: '#1CB0F6' },
-  assignmentActionText: { fontSize: 12, fontWeight: 'bold', color: '#1CB0F6' },
+  assignmentTitle: {
+    fontSize: 15,
+    fontWeight: "bold",
+    color: "#2C3A47",
+    marginBottom: 2,
+  },
+  assignmentSub: { fontSize: 12, color: "#8CA0B3" },
+  assignmentAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#1CB0F6",
+  },
+  assignmentActionText: { fontSize: 12, fontWeight: "bold", color: "#1CB0F6" },
 
   headerLeft: { flex: 1 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 10 },
   profileButton: {
-    width: 40, height: 40, borderRadius: 20, overflow: 'hidden',
-    borderWidth: 2, borderColor: '#1CB0F6',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: "hidden",
+    borderWidth: 2,
+    borderColor: "#1CB0F6",
   },
-  headerAvatarImage: { width: '100%', height: '100%' },
+  headerAvatarImage: { width: "100%", height: "100%" },
   headerAvatarPlaceholder: {
-    width: '100%', height: '100%', backgroundColor: '#1CB0F6',
-    justifyContent: 'center', alignItems: 'center',
+    width: "100%",
+    height: "100%",
+    backgroundColor: "#1CB0F6",
+    justifyContent: "center",
+    alignItems: "center",
   },
 });

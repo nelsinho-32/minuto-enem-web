@@ -9,7 +9,7 @@ import { FontAwesome5 } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 
 const { width, height } = Dimensions.get('window');
-const API_URL = 'http://192.168.1.15:3333/api/questions';
+const API_URL = 'http://192.168.1.12:3333/api/questions';
 
 export default function QuizScreen() {
   const router = useRouter();
