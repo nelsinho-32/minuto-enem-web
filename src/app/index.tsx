@@ -1,50 +1,52 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Animated,
-  Platform,
   Image,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Href, useRouter } from "expo-router";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { useUserStore } from "@/store/useUserStore";
+import { WeeklyStreakCalendar } from "@/components/WeeklyStreakCalendar";
+import { CreateRoomButton } from "@/components/CreateRoomButton";
+import { useClassroomStore } from "@/store/useClassroomStore";
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { xp, streak, avatar } = useUserStore();
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const {
+    currentStreak,
+    iceFreezes,
+    avatar,
+    validateStreakOnLogin,
+    getWeekDays,
+  } = useUserStore();
+
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [joinCodeInput, setJoinCodeInput] = useState("");
+  const [joinError, setJoinError] = useState<string | null>(null);
+
+  const classrooms = useClassroomStore((state) => state.classrooms);
+  const joinClassroomByCode = useClassroomStore((state) => state.joinClassroomByCode);
 
   useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.2,
-          duration: 600,
-          useNativeDriver: Platform.OS !== "web",
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 600,
-          useNativeDriver: Platform.OS !== "web",
-        }),
-      ]),
-    ).start();
-  }, []);
+    validateStreakOnLogin();
+  }, [validateStreakOnLogin]);
 
-  const weekDays = [
-    { label: "D", active: false },
-    { label: "S", active: true },
-    { label: "T", active: true },
-    { label: "Q", active: false },
-    { label: "Q", active: true },
-    { label: "S", active: true },
-    { label: "S", active: true, isToday: true },
-  ];
+  const weekDays = getWeekDays();
+
+  const muralSummary = {
+    pendingTasks: 2,
+    overdueTasks: 1,
+    difficultySubject: "Matemática",
+  };
 
   const enemSubjects = [
     {
@@ -85,21 +87,63 @@ export default function HomeScreen() {
     { id: "fisica", name: "Física", icon: "atom", color: "#58CC02" },
   ];
 
+  const filteredSubjects = searchQuery.trim()
+    ? enemSubjects.filter((s) =>
+        s.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
+      )
+    : enemSubjects;
+
   return (
     <SafeAreaView style={styles.container}>
       {/* 1. HEADER */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Text style={styles.greeting}>Olá, Futuro Federal!</Text>
-          <Text style={styles.subtitle}>O que vamos estudar hoje?</Text>
+          <Image
+            source={require("@/assets/images/name-logo.png")}
+            style={styles.headerNameLogo}
+            resizeMode="contain"
+          />
         </View>
 
         <View style={styles.headerRight}>
-          {/* Badge de XP */}
-          <View style={styles.xpBadge}>
-            <FontAwesome5 name="star" size={14} color="#F1C40F" solid />
-            <Text style={styles.xpText}>{xp}</Text>
-          </View>
+          {/* Botão de Pesquisa */}
+          <TouchableOpacity
+            style={[
+              styles.headerIconButton,
+              showSearch && styles.headerIconButtonActive,
+            ]}
+            activeOpacity={0.7}
+            onPress={() => {
+              setShowSearch((prev) => !prev);
+              setShowNotifications(false);
+            }}
+          >
+            <FontAwesome5
+              name="search"
+              size={16}
+              color={showSearch ? "#1CB0F6" : "#2C3A47"}
+            />
+          </TouchableOpacity>
+
+          {/* Botão de Notificação */}
+          <TouchableOpacity
+            style={[
+              styles.headerIconButton,
+              showNotifications && styles.headerIconButtonActive,
+            ]}
+            activeOpacity={0.7}
+            onPress={() => {
+              setShowNotifications((prev) => !prev);
+              setShowSearch(false);
+            }}
+          >
+            <FontAwesome5
+              name="bell"
+              size={17}
+              color={showNotifications ? "#1CB0F6" : "#2C3A47"}
+            />
+            <View style={styles.notificationDot} />
+          </TouchableOpacity>
 
           {/* Atalho para o Perfil com Foto Dinâmica */}
           <TouchableOpacity
@@ -121,63 +165,243 @@ export default function HomeScreen() {
         </View>
       </View>
 
+      {/* Barra de Pesquisa Expansível */}
+      {showSearch && (
+        <View style={styles.searchBarContainer}>
+          <FontAwesome5 name="search" size={14} color="#8CA0B3" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Pesquisar matéria do ENEM..."
+            placeholderTextColor="#8CA0B3"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoFocus
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery("")}>
+              <FontAwesome5 name="times-circle" size={16} color="#8CA0B3" />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* Painel Rápido de Notificações */}
+      {showNotifications && (
+        <View style={styles.notificationsDropdown}>
+          <Text style={styles.notificationsTitle}>Notificações</Text>
+          <TouchableOpacity
+            style={styles.notificationItem}
+            onPress={() => {
+              setShowNotifications(false);
+              router.push("/classes/tasks" as any);
+            }}
+          >
+            <FontAwesome5 name="exclamation-circle" size={14} color="#FF4B4B" />
+            <Text style={styles.notificationText}>
+              Você tem {muralSummary.overdueTasks} atividade atrasada e{" "}
+              {muralSummary.pendingTasks} para fazer.
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.notificationItem}
+            onPress={() => {
+              setShowNotifications(false);
+              router.push("/stats/errors");
+            }}
+          >
+            <FontAwesome5 name="microscope" size={14} color="#1CB0F6" />
+            <Text style={styles.notificationText}>
+              Recomendação: revisar erros de {muralSummary.difficultySubject}.
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* 2. CALENDÁRIO DE OFENSIVA */}
-        <TouchableOpacity
-          style={styles.section}
-          activeOpacity={0.7}
-          onPress={() => router.push("/streak")}
-        >
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Sua Ofensiva</Text>
-            <View style={styles.streakBadge}>
-              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <FontAwesome5 name="fire-alt" size={16} color="#FF9600" />
-              </Animated.View>
-              <Text style={styles.streakText}>{streak} dias</Text>
+        {/* 2. OFENSIVA COMPACTA + MURAL LADO A LADO */}
+        <View style={styles.topOverviewRow}>
+          <WeeklyStreakCalendar
+            compact
+            currentStreak={currentStreak}
+            iceFreezes={iceFreezes}
+            weekDays={weekDays}
+            onPress={() => router.push("/streak")}
+          />
+
+          {/* MURAL DE ATIVIDADES E DIFICULDADES */}
+          <View style={styles.muralCard}>
+            <View style={styles.muralHeader}>
+              <FontAwesome5 name="clipboard-list" size={14} color="#1CB0F6" />
+              <Text style={styles.muralTitle}>Mural</Text>
+            </View>
+
+            <View style={styles.muralList}>
+              {/* Atividades para fazer */}
+              <TouchableOpacity
+                style={styles.muralItem}
+                activeOpacity={0.7}
+                onPress={() => router.push("/classes/tasks" as any)}
+              >
+                <View
+                  style={[styles.muralBadgeIcon, { backgroundColor: "#E0F2FE" }]}
+                >
+                  <FontAwesome5 name="tasks" size={11} color="#1CB0F6" />
+                </View>
+                <View style={styles.muralItemTexts}>
+                  <Text style={styles.muralItemValue}>
+                    {muralSummary.pendingTasks} para fazer
+                  </Text>
+                  <Text style={styles.muralItemLabel}>Atividades no prazo</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Atividades atrasadas */}
+              <TouchableOpacity
+                style={styles.muralItem}
+                activeOpacity={0.7}
+                onPress={() => router.push("/classes/tasks" as any)}
+              >
+                <View
+                  style={[styles.muralBadgeIcon, { backgroundColor: "#FFF0D4" }]}
+                >
+                  <FontAwesome5
+                    name="exclamation-circle"
+                    size={11}
+                    color="#FF9600"
+                  />
+                </View>
+                <View style={styles.muralItemTexts}>
+                  <Text style={[styles.muralItemValue, { color: "#D97706" }]}>
+                    {muralSummary.overdueTasks} atrasada
+                  </Text>
+                  <Text style={styles.muralItemLabel}>Prazo encerrado</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Onde está com dificuldades */}
+              <TouchableOpacity
+                style={styles.muralItem}
+                activeOpacity={0.7}
+                onPress={() => router.push("/stats/errors")}
+              >
+                <View
+                  style={[styles.muralBadgeIcon, { backgroundColor: "#FFE4E6" }]}
+                >
+                  <FontAwesome5
+                    name="exclamation-triangle"
+                    size={10}
+                    color="#FF4B4B"
+                  />
+                </View>
+                <View style={styles.muralItemTexts}>
+                  <Text
+                    style={[styles.muralItemValue, { color: "#FF4B4B" }]}
+                    numberOfLines={1}
+                  >
+                    {muralSummary.difficultySubject}
+                  </Text>
+                  <Text style={styles.muralItemLabel}>Maior dificuldade</Text>
+                </View>
+              </TouchableOpacity>
             </View>
           </View>
-          <View style={styles.calendarCard}>
-            {weekDays.map((day, index) => (
-              <View key={index} style={styles.dayContainer}>
-                <View
-                  style={[
-                    styles.dayCircle,
-                    day.active && styles.dayActive,
-                    day.isToday && styles.dayToday,
-                  ]}
-                >
-                  {day.active && (
-                    <Animated.View
-                      style={{ transform: [{ scale: pulseAnim }] }}
-                    >
-                      <FontAwesome5 name="fire-alt" size={14} color="#FF9600" />
-                    </Animated.View>
-                  )}
-                </View>
-                <Text
-                  style={[styles.dayLabel, day.isToday && styles.dayLabelToday]}
-                >
-                  {day.label}
-                </Text>
-              </View>
-            ))}
-          </View>
-        </TouchableOpacity>
+        </View>
 
         {/* ========================================== */}
-        {/* NOVA SEÇÃO: MINHA TURMA                    */}
+        {/* SEÇÃO: MINHA TURMA                         */}
         {/* ========================================== */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Minha Turma</Text>
-            <TouchableOpacity>
+            <TouchableOpacity onPress={() => { setShowJoinModal(true); setJoinError(null); }}>
               <Text style={styles.addClassText}>+ Código da Turma</Text>
             </TouchableOpacity>
           </View>
+
+          <CreateRoomButton />
+
+          {/* Modal / Caixa de Entrada com Código de Turma */}
+          {showJoinModal && (
+            <View style={styles.joinCodeBox}>
+              <View style={styles.joinCodeHeader}>
+                <Text style={styles.joinCodeTitle}>Entrar em uma Turma</Text>
+                <TouchableOpacity onPress={() => setShowJoinModal(false)}>
+                  <FontAwesome5 name="times" size={14} color="#8CA0B3" />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.joinCodeSub}>
+                Digite o código fornecido pelo seu professor (ex: FIS-2026, MAT-800).
+              </Text>
+              <View style={styles.joinCodeInputRow}>
+                <TextInput
+                  style={[styles.joinCodeInput, joinError ? styles.joinCodeInputError : null]}
+                  placeholder="CÓDIGO DA TURMA"
+                  placeholderTextColor="#A0AEC0"
+                  autoCapitalize="characters"
+                  value={joinCodeInput}
+                  onChangeText={(t) => {
+                    setJoinCodeInput(t);
+                    if (joinError) setJoinError(null);
+                  }}
+                />
+                <TouchableOpacity
+                  style={styles.joinCodeButton}
+                  onPress={() => {
+                    if (!joinCodeInput.trim()) {
+                      setJoinError("Digite o código da turma.");
+                      return;
+                    }
+                    const res = joinClassroomByCode(joinCodeInput);
+                    if (res.success && res.classroom) {
+                      setShowJoinModal(false);
+                      setJoinCodeInput("");
+                      router.push(`/classes/${res.classroom.id}` as any);
+                    } else {
+                      setJoinError(res.message);
+                    }
+                  }}
+                >
+                  <Text style={styles.joinCodeButtonText}>Entrar</Text>
+                </TouchableOpacity>
+              </View>
+              {joinError && (
+                <View style={styles.joinErrorRow}>
+                  <FontAwesome5 name="exclamation-circle" size={12} color="#FF4B4B" />
+                  <Text style={styles.joinErrorText}>{joinError}</Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Lista de Turmas Cadastradas / Disponíveis */}
+          {classrooms.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.classroomsScroll}
+            >
+              {classrooms.map((c) => (
+                <TouchableOpacity
+                  key={c.id}
+                  style={[styles.classroomBadgeCard, { borderLeftColor: c.themeColor }]}
+                  activeOpacity={0.8}
+                  onPress={() => router.push(`/classes/${c.id}` as any)}
+                >
+                  <View style={[styles.classroomBadgeIcon, { backgroundColor: c.themeColor }]}>
+                    <FontAwesome5 name={c.icon || "chalkboard-teacher"} size={13} color="#FFF" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.classroomBadgeName} numberOfLines={1}>{c.name}</Text>
+                    <Text style={styles.classroomBadgeSub}>Código: {c.code}</Text>
+                  </View>
+                  <FontAwesome5 name="chevron-right" size={10} color="#8CA0B3" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
 
           <View style={styles.row}>
             {/* Vai para a Tela de Tarefas (Questões) */}
@@ -278,7 +502,7 @@ export default function HomeScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Matérias do ENEM</Text>
           <View style={styles.gridContainer}>
-            {enemSubjects.map((subject, index) => (
+            {filteredSubjects.map((subject, index) => (
               <TouchableOpacity
                 key={index}
                 style={[styles.gridItem, { borderLeftColor: subject.color }]}
@@ -330,8 +554,8 @@ export default function HomeScreen() {
             <View style={styles.analysisTextContent}>
               <Text style={styles.analysisTitle}>Raio-X de Erros</Text>
               <Text style={styles.analysisSub}>
-                Veja o que melhorar, o tempo gasto nas falhas e as soluções
-                comentadas.
+                Veja sua taxa de erro, o tempo médio e os assuntos com mais
+                falhas por matéria.
               </Text>
             </View>
             <FontAwesome5 name="chevron-right" size={16} color="#E2E8F0" />
@@ -381,27 +605,183 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 20,
+    paddingVertical: 12,
     backgroundColor: "#FFF",
     borderBottomWidth: 1,
     borderBottomColor: "#E2E8F0",
   },
-  greeting: { fontSize: 22, fontWeight: "bold", color: "#2C3A47" },
-  subtitle: { fontSize: 14, color: "#8CA0B3", marginTop: 4 },
-  xpBadge: {
+  headerLeft: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "flex-start",
+  },
+  headerNameLogo: {
+    width: 115,
+    height: 44,
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  headerIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    justifyContent: "center",
+    alignItems: "center",
+    position: "relative",
+  },
+  headerIconButtonActive: {
+    backgroundColor: "#E0F2FE",
+    borderColor: "#BAE6FD",
+  },
+  notificationDot: {
+    position: "absolute",
+    top: 8,
+    right: 9,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#FF4B4B",
+    borderWidth: 1.5,
+    borderColor: "#FFF",
+  },
+  profileButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: "hidden",
+    borderWidth: 2,
+    borderColor: "#1CB0F6",
+  },
+  headerAvatarImage: { width: "100%", height: "100%" },
+  headerAvatarPlaceholder: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: "#1CB0F6",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  searchBarContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+    gap: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: "#2C3A47",
+    paddingVertical: 4,
+  },
+
+  notificationsDropdown: {
+    backgroundColor: "#FFF",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+    gap: 8,
+  },
+  notificationsTitle: {
+    fontSize: 13,
+    fontWeight: "bold",
+    color: "#8CA0B3",
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  notificationItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#F8FAFC",
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  notificationText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#2C3A47",
+  },
+
+  scrollContent: { padding: 20, paddingBottom: 40 },
+
+  // Seção Lado a Lado: Ofensiva + Mural
+  topOverviewRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 28,
+    alignItems: "stretch",
+  },
+  muralCard: {
+    flex: 1,
+    backgroundColor: "#FFF",
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    justifyContent: "space-between",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  muralHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#FFF9E6",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#F1C40F",
+    marginBottom: 10,
   },
-  xpText: { fontSize: 16, fontWeight: "bold", color: "#D4A017" },
-  scrollContent: { padding: 20, paddingBottom: 40 },
+  muralTitle: {
+    fontSize: 15,
+    fontWeight: "bold",
+    color: "#2C3A47",
+  },
+  muralList: {
+    gap: 8,
+  },
+  muralItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#F8FAFC",
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+  },
+  muralBadgeIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  muralItemTexts: {
+    flex: 1,
+  },
+  muralItemValue: {
+    fontSize: 12,
+    fontWeight: "bold",
+    color: "#2C3A47",
+  },
+  muralItemLabel: {
+    fontSize: 10,
+    color: "#8CA0B3",
+  },
 
   section: { marginBottom: 28 },
   sectionHeader: {
@@ -416,39 +796,6 @@ const styles = StyleSheet.create({
     color: "#2C3A47",
     marginBottom: 12,
   },
-
-  streakBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 12,
-  },
-  streakText: { fontSize: 14, fontWeight: "bold", color: "#FF9600" },
-
-  calendarCard: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    backgroundColor: "#FFF",
-    padding: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  dayContainer: { alignItems: "center", gap: 8 },
-  dayCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#F7F9FC",
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "#E2E8F0",
-  },
-  dayActive: { backgroundColor: "#FFF0D4", borderColor: "#FFB84D" },
-  dayToday: { borderColor: "#2C3A47", borderWidth: 2 },
-  dayLabel: { fontSize: 12, color: "#8CA0B3", fontWeight: "bold" },
-  dayLabelToday: { color: "#2C3A47" },
 
   mainActionCard: {
     flexDirection: "row",
@@ -517,7 +864,7 @@ const styles = StyleSheet.create({
   },
   gridItemText: { fontSize: 14, fontWeight: "bold", color: "#4B5563", flex: 1 },
 
-  // Estilos da Nova Seção de Análise
+  // Estilos da Seção de Análise
   analysisCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -546,7 +893,7 @@ const styles = StyleSheet.create({
   },
   analysisSub: { fontSize: 13, color: "#8CA0B3", lineHeight: 18 },
 
-  // Estilos da Nova Seção de Anotações
+  // Estilos da Seção de Anotações
   card: {
     flex: 1,
     backgroundColor: "#FFF",
@@ -566,68 +913,116 @@ const styles = StyleSheet.create({
   },
   cardSub: { fontSize: 12, color: "#8CA0B3", lineHeight: 16 },
 
-  // NOVOS ESTILOS: SALA DE AULA
+  // SALA DE AULA
   addClassText: { fontSize: 14, fontWeight: "bold", color: "#1CB0F6" },
-  assignmentCard: {
-    flexDirection: "row",
-    alignItems: "center",
+
+  // Estilos do Modal / Entrada de Código
+  joinCodeBox: {
     backgroundColor: "#FFF",
     padding: 16,
     borderRadius: 16,
-    marginBottom: 10,
     borderWidth: 1,
     borderColor: "#E2E8F0",
+    marginBottom: 14,
+    gap: 8,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
   },
-  assignmentIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: "#FF4B4B",
-    justifyContent: "center",
+  joinCodeHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    marginRight: 12,
   },
-  assignmentInfo: { flex: 1, paddingRight: 10 },
-  assignmentTitle: {
+  joinCodeTitle: {
     fontSize: 15,
     fontWeight: "bold",
     color: "#2C3A47",
-    marginBottom: 2,
   },
-  assignmentSub: { fontSize: 12, color: "#8CA0B3" },
-  assignmentAction: {
+  joinCodeSub: {
+    fontSize: 12,
+    color: "#8CA0B3",
+    lineHeight: 16,
+  },
+  joinCodeInputRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  joinCodeInput: {
+    flex: 1,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#2C3A47",
+    letterSpacing: 1,
+  },
+  joinCodeInputError: {
+    borderColor: "#FF4B4B",
+    backgroundColor: "#FFF5F5",
+  },
+  joinCodeButton: {
+    backgroundColor: "#1CB0F6",
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  joinCodeButtonText: {
+    color: "#FFF",
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+  joinErrorRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    marginTop: 2,
+  },
+  joinErrorText: {
+    fontSize: 12,
+    color: "#FF4B4B",
+    fontWeight: "600",
+  },
+
+  classroomsScroll: {
+    gap: 10,
+    paddingBottom: 12,
+  },
+  classroomBadgeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF",
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    paddingVertical: 6,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#1CB0F6",
+    borderColor: "#E2E8F0",
+    borderLeftWidth: 4,
+    width: 220,
+    gap: 10,
   },
-  assignmentActionText: { fontSize: 12, fontWeight: "bold", color: "#1CB0F6" },
-
-  headerLeft: { flex: 1 },
-  headerRight: { flexDirection: "row", alignItems: "center", gap: 10 },
-  profileButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    overflow: "hidden",
-    borderWidth: 2,
-    borderColor: "#1CB0F6",
-  },
-  headerAvatarImage: { width: "100%", height: "100%" },
-  headerAvatarPlaceholder: {
-    width: "100%",
-    height: "100%",
-    backgroundColor: "#1CB0F6",
+  classroomBadgeIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
+  },
+  classroomBadgeName: {
+    fontSize: 13,
+    fontWeight: "bold",
+    color: "#2C3A47",
+  },
+  classroomBadgeSub: {
+    fontSize: 11,
+    color: "#8CA0B3",
   },
 });

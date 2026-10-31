@@ -37,7 +37,6 @@ export default function CorrectAnswersScreen() {
     setQuestions(prev => prev.map(q => q.id === id ? { ...q, isFavorite: !q.isFavorite } : q));
   };
 
-  // MÁGICA: Filtra por área (se existir) e ordena os favoritos para o topo
   const filteredAndSortedQuestions = useMemo(() => {
     let filtered = area ? questions.filter(q => q.area === area) : questions;
     return filtered.sort((a, b) => {

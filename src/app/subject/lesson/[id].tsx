@@ -7,15 +7,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { FontAwesome5 } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
+import { useUserStore } from '@/store/useUserStore';
+import { API_BASE_URL } from '@/constants/api';
 
 const { width, height } = Dimensions.get('window');
 
-// Lembre-se de colocar o seu IP atual aqui!
-const API_URL = 'http://192.168.1.12:3333/api/lessons';
+const API_URL = `${API_BASE_URL}/lessons`;
 
 export default function LessonScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { registerDailyPlay } = useUserStore();
 
   const [lesson, setLesson] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -117,13 +119,16 @@ export default function LessonScreen() {
         <TouchableOpacity 
           style={styles.practiceButton} 
           activeOpacity={0.8}
-          onPress={() => router.push({
-            pathname: '/quiz',
-            params: { mode: 'pratica', subject: lesson.subject?.slug, limit: 10 }
-          })}
+          onPress={async () => {
+            await registerDailyPlay();
+            router.push({
+              pathname: '/quiz',
+              params: { mode: 'pratica', subject: lesson.subject?.slug, limit: 10 }
+            });
+          }}
         >
           <FontAwesome5 name="dumbbell" size={20} color="#FFF" />
-          <Text style={styles.practiceButtonText}>Praticar este Assunto</Text>
+          <Text style={styles.practiceButtonText}>Concluir Aula e Praticar</Text>
         </TouchableOpacity>
 
         {/* ========================================== */}

@@ -1,10 +1,11 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { FontAwesome5 } from '@expo/vector-icons';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import { useUserStore } from '@/store/useUserStore';
+import { WeeklyStreakCalendar } from '@/components/WeeklyStreakCalendar';
 
 // Configuração do idioma
 LocaleConfig.locales['pt-br'] = {
@@ -18,27 +19,23 @@ LocaleConfig.defaultLocale = 'pt-br';
 
 export default function StreakScreen() {
   const router = useRouter();
-  const { streak } = useUserStore();
+  const {
+    currentStreak,
+    longestStreak,
+    iceFreezes,
+    streakHistory,
+    getWeekDays,
+  } = useUserStore();
 
-  // SIMULAÇÃO: Se a ofensiva for 0, forçamos o valor 5 apenas para visualização do layout.
-  // Em produção, você removerá essa linha e usará apenas o 'streak' real.
-  const displayStreak = streak > 0 ? streak : 5; 
+  const weekDays = getWeekDays();
 
-  // Esta lógica cria exatamente a mesma quantidade de dias marcados 
-  // que o número total exibido no placar acima do calendário.
   const markedDates = useMemo(() => {
-    const dates: Record<string, any> = {};
-    const today = new Date();
-
-    for (let i = 0; i < displayStreak; i++) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      const dateString = date.toISOString().split('T')[0];
-      
-      dates[dateString] = { selected: true };
-    }
+    const dates: Record<string, { status: 'COMPLETED' | 'FROZEN' }> = {};
+    Object.entries(streakHistory).forEach(([dateStr, status]) => {
+      dates[dateStr] = { status };
+    });
     return dates;
-  }, [displayStreak]);
+  }, [streakHistory]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -47,21 +44,45 @@ export default function StreakScreen() {
           <FontAwesome5 name="arrow-left" size={20} color="#2C3A47" />
         </TouchableOpacity>
         <Text style={styles.title}>Suas Conquistas</Text>
-        <View style={{ width: 40 }} /> 
+        <View style={{ width: 40 }} />
       </View>
 
-      <View style={styles.content}>
-        {/* Placar de Ofensiva (Relacionado aos dias do calendário) */}
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Placar Principal de Ofensiva */}
         <View style={styles.streakShowcase}>
           <FontAwesome5 name="fire-alt" size={60} color="#FF9600" style={styles.icon} />
-          <Text style={styles.streakNumber}>{displayStreak}</Text>
+          <Text style={styles.streakNumber}>{currentStreak}</Text>
           <Text style={styles.streakLabel}>Dias seguidos estudando!</Text>
+
+          <View style={styles.metricsRow}>
+            <View style={styles.metricBox}>
+              <FontAwesome5 name="trophy" size={16} color="#F1C40F" />
+              <Text style={styles.metricValue}>{longestStreak} dias</Text>
+              <Text style={styles.metricLabel}>Maior Ofensiva</Text>
+            </View>
+
+            <View style={styles.metricDivider} />
+
+            <View style={styles.metricBox}>
+              <Text style={styles.freezeEmoji}>🧊</Text>
+              <Text style={styles.metricValue}>{iceFreezes} disponíveis</Text>
+              <Text style={styles.metricLabel}>Bloqueios de Gelo</Text>
+            </View>
+          </View>
         </View>
-        
+
+        {/* Componente de Calendário da Semana */}
+        <WeeklyStreakCalendar
+          currentStreak={currentStreak}
+          iceFreezes={iceFreezes}
+          weekDays={weekDays}
+        />
+
+        {/* Calendário Mensal com Fogo (🔥) e Gelo (🧊) */}
         <View style={styles.calendarContainer}>
           <Calendar
             hideExtraDays={true}
-            markedDates={markedDates}
+            markedDates={markedDates as any}
             theme={{
               calendarBackground: '#FFFFFF',
               textSectionTitleColor: '#8CA0B3',
@@ -70,27 +91,31 @@ export default function StreakScreen() {
               textDayHeaderFontWeight: 'bold',
               arrowColor: '#FF9600',
             }}
-            // Substituímos o visual padrão por um componente customizado
             dayComponent={({ date, state, marking }: any) => {
-              const isSelected = marking?.selected;
+              const status: 'COMPLETED' | 'FROZEN' | undefined = marking?.status;
+              const isCompleted = status === 'COMPLETED';
+              const isFrozen = status === 'FROZEN';
               const isToday = state === 'today';
               const isDisabled = state === 'disabled';
 
               return (
                 <View style={[
-                  styles.dayCell, 
-                  isSelected && styles.dayCellSelected,
-                  isToday && !isSelected && styles.dayCellToday
+                  styles.dayCell,
+                  isCompleted && styles.dayCellCompleted,
+                  isFrozen && styles.dayCellFrozen,
+                  isToday && !isCompleted && !isFrozen && styles.dayCellToday
                 ]}>
-                  {/* Foguinho injetado diretamente na célula do dia! */}
-                  {isSelected && (
-                    <FontAwesome5 name="fire-alt" size={14} color="#FFFFFF" style={styles.dayIcon} />
+                  {isCompleted && (
+                    <FontAwesome5 name="fire-alt" size={12} color="#FFFFFF" style={styles.dayIcon} />
+                  )}
+                  {isFrozen && (
+                    <Text style={styles.dayIceEmoji}>🧊</Text>
                   )}
                   <Text style={[
                     styles.dayText,
-                    isSelected && styles.dayTextSelected,
+                    (isCompleted || isFrozen) && styles.dayTextSelected,
                     isDisabled && styles.dayTextDisabled,
-                    isToday && !isSelected && styles.dayTextToday
+                    isToday && !isCompleted && !isFrozen && styles.dayTextToday
                   ]}>
                     {date.day}
                   </Text>
@@ -99,22 +124,22 @@ export default function StreakScreen() {
             }}
           />
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F7F9FC' },
-  header: { 
-    flexDirection: 'row', justifyContent: 'space-between', 
+  header: {
+    flexDirection: 'row', justifyContent: 'space-between',
     padding: 20, alignItems: 'center', backgroundColor: '#FFF',
     borderBottomWidth: 1, borderColor: '#E2E8F0'
   },
   backButton: { width: 40, height: 40, justifyContent: 'center' },
   title: { fontSize: 20, fontWeight: 'bold', color: '#2C3A47' },
-  content: { flex: 1, paddingTop: 20, paddingHorizontal: 20 },
-  
+  content: { paddingTop: 20, paddingHorizontal: 20, paddingBottom: 40 },
+
   streakShowcase: {
     alignItems: 'center', backgroundColor: '#FFF', padding: 24,
     borderRadius: 24, borderWidth: 1, borderColor: '#E2E8F0',
@@ -123,32 +148,53 @@ const styles = StyleSheet.create({
   },
   icon: { marginBottom: 10 },
   streakNumber: { fontSize: 48, fontWeight: 'bold', color: '#2C3A47' },
-  streakLabel: { fontSize: 16, color: '#8CA0B3', fontWeight: '600' },
-  
+  streakLabel: { fontSize: 16, color: '#8CA0B3', fontWeight: '600', marginBottom: 20 },
+
+  metricsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    justifyContent: 'space-around',
+  },
+  metricBox: { alignItems: 'center', flex: 1, gap: 4 },
+  metricDivider: { width: 1, backgroundColor: '#E2E8F0' },
+  metricValue: { fontSize: 15, fontWeight: 'bold', color: '#2C3A47' },
+  metricLabel: { fontSize: 12, color: '#8CA0B3' },
+  freezeEmoji: { fontSize: 16 },
+
   calendarContainer: {
     borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0',
     backgroundColor: '#FFF', paddingBottom: 10,
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
   },
 
-  // Estilos da Célula Customizada do Calendário
   dayCell: {
-    width: 40, height: 44, 
+    width: 40, height: 44,
     justifyContent: 'center', alignItems: 'center',
     borderRadius: 12,
   },
-  dayCellSelected: {
-    backgroundColor: '#FF9600', // Laranja do foguinho
+  dayCellCompleted: {
+    backgroundColor: '#FF9600',
     shadowColor: '#FF9600', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 3, elevation: 3,
+  },
+  dayCellFrozen: {
+    backgroundColor: '#38BDF8',
+    shadowColor: '#0284C7', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3, elevation: 3,
   },
   dayCellToday: {
     borderWidth: 2, borderColor: '#1CB0F6',
   },
   dayIcon: {
-    marginBottom: 2, // Espaço entre o fogo e o número
+    marginBottom: 2,
+  },
+  dayIceEmoji: {
+    fontSize: 11,
+    marginBottom: 1,
   },
   dayText: {
-    fontSize: 14, fontWeight: 'bold', color: '#2C3A47'
+    fontSize: 13, fontWeight: 'bold', color: '#2C3A47'
   },
   dayTextSelected: {
     color: '#FFFFFF'

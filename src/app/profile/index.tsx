@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { FontAwesome5 } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useUserStore } from '@/store/useUserStore';
+import { ConfirmModal } from '@/components/ConfirmModal';
 
 const USER_PROFILE = {
   name: 'Nelson Filho',
@@ -29,8 +30,24 @@ const FRIENDS_RANKING = [
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { xp, avatar, setAvatar } = useUserStore(); // Pega e altera o avatar globalmente
+  const { xp, answeredQuestionsCount, avatar, setAvatar, logout, user } = useUserStore();
   const [activeTab, setActiveTab] = useState<'conquistas' | 'amigos'>('amigos');
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+
+  const displayName = user?.name || USER_PROFILE.name;
+  const displayRole = user?.role === 'TEACHER' ? 'Professor(a)' : 'Estudante';
+  const displayCourseOrClass = user?.courseOrClass || '3º Ano B';
+  const displaySchool = user?.school ? ` • ${user.school}` : '';
+
+  const handleLogout = () => {
+    setShowLogoutModal(true);
+  };
+
+  const confirmLogoutAction = () => {
+    setShowLogoutModal(false);
+    logout();
+    router.replace('/auth/login' as any);
+  };
 
   // Função para abrir a galeria e alterar a foto de perfil
   const handlePickImage = async () => {
@@ -61,8 +78,8 @@ export default function ProfileScreen() {
           <FontAwesome5 name="arrow-left" size={20} color="#2C3A47" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Meu Perfil</Text>
-        <TouchableOpacity style={styles.settingsButton}>
-          <FontAwesome5 name="cog" size={20} color="#8CA0B3" />
+        <TouchableOpacity style={styles.settingsButton} onPress={handleLogout}>
+          <FontAwesome5 name="sign-out-alt" size={18} color="#FF4B4B" />
         </TouchableOpacity>
       </View>
 
@@ -85,14 +102,16 @@ export default function ProfileScreen() {
             </View>
           </TouchableOpacity>
           
-          <Text style={styles.userName}>{USER_PROFILE.name}</Text>
-          <Text style={styles.userCourse}>{USER_PROFILE.course}</Text>
+          <Text style={styles.userName}>{displayName}</Text>
+          <Text style={styles.userCourse}>
+            {displayRole} • {displayCourseOrClass}{displaySchool}
+          </Text>
           
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
-              <FontAwesome5 name="star" size={16} color="#F1C40F" solid />
-              <Text style={styles.statValue}>{xp}</Text>
-              <Text style={styles.statLabel}>Total XP</Text>
+              <FontAwesome5 name="check-circle" size={16} color="#1CB0F6" solid />
+              <Text style={styles.statValue}>{answeredQuestionsCount ?? 47}</Text>
+              <Text style={styles.statLabel}>Questões Respondidas</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statItem}>
@@ -131,6 +150,24 @@ export default function ProfileScreen() {
         {/* CONTEÚDO */}
         {activeTab === 'amigos' && (
           <View style={styles.friendsSection}>
+            {/* BANNER / BOTÃO DE CHAT DE AMIGOS */}
+            <TouchableOpacity
+              style={styles.chatPromoBanner}
+              activeOpacity={0.85}
+              onPress={() => router.push('/chat' as any)}
+            >
+              <View style={styles.chatPromoIcon}>
+                <FontAwesome5 name="comments" size={20} color="#FFF" />
+              </View>
+              <View style={styles.chatPromoInfo}>
+                <Text style={styles.chatPromoTitle}>Chat de Estudos & Macetes</Text>
+                <Text style={styles.chatPromoSubtitle}>
+                  Compartilhe questões, macetes e tire dúvidas com a turma!
+                </Text>
+              </View>
+              <FontAwesome5 name="chevron-right" size={14} color="#1CB0F6" />
+            </TouchableOpacity>
+
             <View style={styles.friendsHeader}>
               <Text style={styles.sectionTitle}>Ranking Semanal</Text>
               <TouchableOpacity>
@@ -160,8 +197,11 @@ export default function ProfileScreen() {
                     <Text style={styles.friendXp}>{friend.xp} XP</Text>
                     
                     {!friend.isMe && (
-                      <TouchableOpacity style={styles.cheerButton}>
-                        <FontAwesome5 name="hands-helping" size={14} color="#1CB0F6" />
+                      <TouchableOpacity 
+                        style={styles.cheerButton}
+                        onPress={() => router.push('/chat' as any)}
+                      >
+                        <FontAwesome5 name="comment-dots" size={14} color="#1CB0F6" />
                       </TouchableOpacity>
                     )}
                   </View>
@@ -188,7 +228,29 @@ export default function ProfileScreen() {
           </View>
         )}
 
+        {/* BOTÃO DE LOGOUT */}
+        <TouchableOpacity
+          style={styles.logoutButton}
+          activeOpacity={0.8}
+          onPress={handleLogout}
+        >
+          <FontAwesome5 name="sign-out-alt" size={16} color="#FF4B4B" />
+          <Text style={styles.logoutButtonText}>Sair da Conta</Text>
+        </TouchableOpacity>
+
       </ScrollView>
+
+      {/* Pop-confirm de Saída da Conta */}
+      <ConfirmModal
+        visible={showLogoutModal}
+        title="Sair da Conta"
+        message="Tem certeza de que deseja encerrar a sua sessão no Minuto ENEM?"
+        confirmText="Sair"
+        confirmColor="#FF4B4B"
+        icon="sign-out-alt"
+        onConfirm={confirmLogoutAction}
+        onCancel={() => setShowLogoutModal(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -211,12 +273,12 @@ const styles = StyleSheet.create({
   cameraBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#2C3A47', width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF' },
 
   userName: { fontSize: 22, fontWeight: 'bold', color: '#2C3A47', marginBottom: 4 },
-  userCourse: { fontSize: 14, color: '#8CA0B3', marginBottom: 24 },
+  userCourse: { fontSize: 13, color: '#8CA0B3', marginBottom: 24, textAlign: 'center' },
   
   statsRow: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', backgroundColor: '#F8FAFC', paddingVertical: 16, borderRadius: 16 },
   statItem: { alignItems: 'center', flex: 1, gap: 4 },
   statValue: { fontSize: 16, fontWeight: 'bold', color: '#2C3A47' },
-  statLabel: { fontSize: 11, color: '#8CA0B3', textTransform: 'uppercase' },
+  statLabel: { fontSize: 10, color: '#8CA0B3', textTransform: 'uppercase', textAlign: 'center' },
   statDivider: { width: 1, height: '80%', backgroundColor: '#E2E8F0', alignSelf: 'center' },
 
   tabContainer: { flexDirection: 'row', backgroundColor: '#E2E8F0', borderRadius: 16, padding: 4, marginBottom: 24 },
@@ -228,6 +290,29 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#2C3A47', marginBottom: 16 },
 
   friendsSection: {},
+  chatPromoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    gap: 12,
+  },
+  chatPromoIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#1CB0F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chatPromoInfo: { flex: 1 },
+  chatPromoTitle: { fontSize: 14, fontWeight: 'bold', color: '#1E293B' },
+  chatPromoSubtitle: { fontSize: 11, color: '#64748B', marginTop: 2 },
+
   friendsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   addFriendText: { fontSize: 14, fontWeight: 'bold', color: '#1CB0F6' },
   
@@ -246,4 +331,22 @@ const styles = StyleSheet.create({
   badgeIconBox: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
   badgeTitle: { fontSize: 12, fontWeight: 'bold', color: '#2C3A47', textAlign: 'center', marginBottom: 4 },
   badgeDesc: { fontSize: 10, color: '#8CA0B3', textAlign: 'center' },
+
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1,
+    borderColor: '#FFE4E6',
+    borderRadius: 16,
+    paddingVertical: 14,
+    marginTop: 28,
+  },
+  logoutButtonText: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#FF4B4B',
+  },
 });

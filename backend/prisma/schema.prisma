@@ -1,0 +1,48 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum StreakDayStatus {
+  COMPLETED // Dia estudado (meta batida) -> 🔥
+  FROZEN    // Dia não estudado, mas salvo pelo gelinho -> 🧊
+}
+
+model User {
+  id            String      @id @default(uuid())
+  name          String
+  email         String      @unique
+  xp            Int         @default(0)
+
+  // Campos do Sistema de Ofensiva (Streak)
+  currentStreak Int         @default(0)
+  longestStreak Int         @default(0)
+  lastStudyDate DateTime?   @db.Date
+  iceFreezes    Int         @default(2) // Quantidade de bloqueios de gelo disponíveis
+
+  streakLogs    StreakLog[]
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("users")
+}
+
+model StreakLog {
+  id        String          @id @default(uuid())
+  userId    String
+  date      DateTime        @db.Date // Normalizado em YYYY-MM-DD (meia-noite UTC)
+  status    StreakDayStatus
+
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime        @default(now())
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@map("streak_logs")
+}
+
