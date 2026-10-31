@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,15 +6,18 @@ import {
   ScrollView,
   TouchableOpacity,
   LayoutAnimation,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { FontAwesome5 } from '@expo/vector-icons';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/services/api';
 import {
   ErrorQuestionItem,
-  INITIAL_ERROR_QUESTIONS,
-  SUBJECT_ERROR_META,
-} from '@/constants/errorStatsData';
+  ErrorStatsApiResponse,
+  fetchErrorStatsFromApi,
+} from '@/app/stats/errors';
 
 function formatSeconds(totalSeconds: number): string {
   const mins = Math.floor(totalSeconds / 60);
@@ -23,20 +26,78 @@ function formatSeconds(totalSeconds: number): string {
   return `${mins}m ${String(secs).padStart(2, '0')}s`;
 }
 
+function getDefaultSubjectMeta(subject: string) {
+  const normalized = subject.toLowerCase();
+  if (normalized.includes('mat')) {
+    return { area: 'Matemática', icon: 'calculator', color: '#FF4B4B', totalAttempted: 20, errorRate: 30, averageTime: '2m 45s' };
+  }
+  if (normalized.includes('fís') || normalized.includes('fis')) {
+    return { area: 'Natureza', icon: 'atom', color: '#FF9600', totalAttempted: 20, errorRate: 28, averageTime: '3m 00s' };
+  }
+  if (normalized.includes('quí') || normalized.includes('qui')) {
+    return { area: 'Natureza', icon: 'flask', color: '#CE82FF', totalAttempted: 20, errorRate: 20, averageTime: '2m 15s' };
+  }
+  if (normalized.includes('port') || normalized.includes('ling')) {
+    return { area: 'Linguagens', icon: 'book-open', color: '#1CB0F6', totalAttempted: 20, errorRate: 15, averageTime: '1m 55s' };
+  }
+  return {
+    area: 'Geral',
+    icon: 'book',
+    color: '#FF4B4B',
+    totalAttempted: 20,
+    errorRate: 25,
+    averageTime: '2m 30s',
+  };
+}
+
 export default function ErrorTopicsScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { subject } = useLocalSearchParams<{ subject: string }>();
   const selectedSubject = subject || 'Matemática';
 
-  const [questions, setQuestions] = useState<ErrorQuestionItem[]>(
-    INITIAL_ERROR_QUESTIONS
-  );
+  const { data, isLoading, error, refetch } = useQuery<ErrorStatsApiResponse, Error>({
+    queryKey: ['error-stats', selectedSubject],
+    networkMode: 'offlineFirst',
+    queryFn: async () => {
+      try {
+        const res = await api.get<ErrorStatsApiResponse | ErrorQuestionItem[]>(
+          `/stats/errors?subject=${encodeURIComponent(selectedSubject)}`
+        );
+        return Array.isArray(res) ? { questions: res } : res ?? { questions: [] };
+      } catch {
+        return fetchErrorStatsFromApi();
+      }
+    },
+  });
+
+  const [questions, setQuestions] = useState<ErrorQuestionItem[]>([]);
   const [collapsedTopics, setCollapsedTopics] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (data?.questions) {
+      setQuestions(data.questions);
+    }
+  }, [data]);
+
+  const favoriteMutation = useMutation({
+    mutationFn: async ({ id, isFavorite }: { id: string; isFavorite: boolean }) => {
+      return api.put(`/stats/errors/${id}/favorite`, { isFavorite });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['error-stats'] });
+    },
+  });
 
   const toggleFavorite = (id: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setQuestions((prev) =>
-      prev.map((q) => (q.id === id ? { ...q, isFavorite: !q.isFavorite } : q))
+      prev.map((q) => {
+        if (q.id !== id) return q;
+        const nextFav = !q.isFavorite;
+        favoriteMutation.mutate({ id, isFavorite: nextFav });
+        return { ...q, isFavorite: nextFav };
+      })
     );
   };
 
@@ -67,7 +128,7 @@ export default function ErrorTopicsScreen() {
 
     const groupsList = Object.entries(grouped).map(([topic, items]) => {
       const avgSec =
-        items.reduce((sum, item) => sum + item.timeSeconds, 0) /
+        items.reduce((sum, item) => sum + (item.timeSeconds || 0), 0) /
         Math.max(items.length, 1);
       return {
         topic,
@@ -76,21 +137,15 @@ export default function ErrorTopicsScreen() {
       };
     });
 
-    const meta = SUBJECT_ERROR_META[selectedSubject] ?? {
-      area: 'Geral',
-      icon: 'book',
-      color: '#FF4B4B',
-      totalAttempted: 20,
-      errorRate: 25,
-      averageTime: '2m 30s',
-    };
+    const meta =
+      data?.subjectMeta?.[selectedSubject] ?? getDefaultSubjectMeta(selectedSubject);
 
     return {
       topicGroups: groupsList,
       subjectMeta: meta,
       totalErrors: subjectQuestions.length,
     };
-  }, [questions, selectedSubject]);
+  }, [questions, selectedSubject, data]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -100,204 +155,226 @@ export default function ErrorTopicsScreen() {
           <FontAwesome5 name="arrow-left" size={20} color="#2C3A47" />
         </TouchableOpacity>
         <Text style={styles.title}>Erros: {selectedSubject}</Text>
-        <View style={{ width: 40 }} />
+        <TouchableOpacity onPress={() => refetch()} style={styles.refreshBtn}>
+          <FontAwesome5 name="sync-alt" size={16} color="#1CB0F6" />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* RESUMO DA MATÉRIA: TAXA DE ERRO E TEMPO MÉDIO */}
-        <View style={[styles.summaryBanner, { borderLeftColor: subjectMeta.color }]}>
-          <View style={styles.summaryItem}>
-            <Text style={[styles.summaryValue, { color: subjectMeta.color }]}>
-              {subjectMeta.errorRate}%
-            </Text>
-            <Text style={styles.summaryLabel}>Taxa de Erro</Text>
-          </View>
-
-          <View style={styles.summaryDivider} />
-
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>{subjectMeta.averageTime}</Text>
-            <Text style={styles.summaryLabel}>Tempo Médio</Text>
-          </View>
-
-          <View style={styles.summaryDivider} />
-
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>{topicGroups.length}</Text>
-            <Text style={styles.summaryLabel}>
-              {topicGroups.length === 1 ? 'Assunto' : 'Assuntos'}
-            </Text>
-          </View>
+      {isLoading ? (
+        <View style={styles.centerState}>
+          <ActivityIndicator size="large" color="#1CB0F6" />
+          <Text style={styles.loadingText}>Carregando erros de {selectedSubject}...</Text>
         </View>
+      ) : error ? (
+        <View style={styles.centerState}>
+          <FontAwesome5
+            name="exclamation-circle"
+            size={44}
+            color="#FF4B4B"
+            style={{ marginBottom: 12 }}
+          />
+          <Text style={styles.errorText}>{error.message}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()}>
+            <Text style={styles.retryBtnText}>Tentar Novamente</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* RESUMO DA MATÉRIA: TAXA DE ERRO E TEMPO MÉDIO */}
+          <View style={[styles.summaryBanner, { borderLeftColor: subjectMeta.color }]}>
+            <View style={styles.summaryItem}>
+              <Text style={[styles.summaryValue, { color: subjectMeta.color }]}>
+                {subjectMeta.errorRate}%
+              </Text>
+              <Text style={styles.summaryLabel}>Taxa de Erro</Text>
+            </View>
 
-        <Text style={styles.sectionTitle}>
-          Separado por Assuntos ({totalErrors}{' '}
-          {totalErrors === 1 ? 'erro' : 'erros'})
-        </Text>
-        <Text style={styles.sectionSub}>
-          Veja os assuntos específicos de {selectedSubject} onde ocorreram suas falhas.
-        </Text>
+            <View style={styles.summaryDivider} />
 
-        {topicGroups.length === 0 ? (
-          <View style={styles.emptyState}>
-            <FontAwesome5
-              name="check-circle"
-              size={48}
-              color="#58CC02"
-              style={{ marginBottom: 16 }}
-            />
-            <Text style={styles.emptyText}>
-              Nenhum erro registrado em {selectedSubject}!
-            </Text>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryValue}>{subjectMeta.averageTime}</Text>
+              <Text style={styles.summaryLabel}>Tempo Médio</Text>
+            </View>
+
+            <View style={styles.summaryDivider} />
+
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryValue}>{topicGroups.length}</Text>
+              <Text style={styles.summaryLabel}>
+                {topicGroups.length === 1 ? 'Assunto' : 'Assuntos'}
+              </Text>
+            </View>
           </View>
-        ) : (
-          topicGroups.map(({ topic, items, avgTime }) => {
-            const isExpanded = !collapsedTopics[topic];
 
-            return (
-              <View key={topic} style={styles.topicSectionCard}>
-                {/* Cabeçalho do Assunto */}
-                <TouchableOpacity
-                  style={[
-                    styles.topicHeader,
-                    isExpanded && styles.topicHeaderActive,
-                  ]}
-                  activeOpacity={0.8}
-                  onPress={() => toggleTopic(topic)}
-                >
-                  <View style={styles.topicHeaderLeft}>
-                    <View
-                      style={[
-                        styles.topicIconBox,
-                        { backgroundColor: `${subjectMeta.color}18` },
-                      ]}
-                    >
-                      <FontAwesome5
-                        name="folder-open"
-                        size={15}
-                        color={subjectMeta.color}
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.topicName}>{topic}</Text>
-                      <Text style={styles.topicSubInfo}>
-                        {items.length}{' '}
-                        {items.length === 1 ? 'questão errada' : 'questões erradas'} • Média: {avgTime}
-                      </Text>
-                    </View>
-                  </View>
+          <Text style={styles.sectionTitle}>
+            Separado por Assuntos ({totalErrors}{' '}
+            {totalErrors === 1 ? 'erro' : 'erros'})
+          </Text>
+          <Text style={styles.sectionSub}>
+            Veja os assuntos específicos de {selectedSubject} onde ocorreram suas falhas.
+          </Text>
 
-                  <FontAwesome5
-                    name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                    size={15}
-                    color="#8CA0B3"
-                  />
-                </TouchableOpacity>
+          {topicGroups.length === 0 ? (
+            <View style={styles.emptyState}>
+              <FontAwesome5
+                name="check-circle"
+                size={48}
+                color="#58CC02"
+                style={{ marginBottom: 16 }}
+              />
+              <Text style={styles.emptyText}>
+                Nenhum erro registrado em {selectedSubject}!
+              </Text>
+            </View>
+          ) : (
+            topicGroups.map(({ topic, items, avgTime }) => {
+              const isExpanded = !collapsedTopics[topic];
 
-                {/* Questões daquele Assunto */}
-                {isExpanded && (
-                  <View style={styles.topicQuestionsList}>
-                    {items.map((question) => (
+              return (
+                <View key={topic} style={styles.topicSectionCard}>
+                  {/* Cabeçalho do Assunto */}
+                  <TouchableOpacity
+                    style={[
+                      styles.topicHeader,
+                      isExpanded && styles.topicHeaderActive,
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => toggleTopic(topic)}
+                  >
+                    <View style={styles.topicHeaderLeft}>
                       <View
-                        key={question.id}
                         style={[
-                          styles.questionCard,
-                          question.isFavorite && styles.favoriteHighlight,
+                          styles.topicIconBox,
+                          { backgroundColor: `${subjectMeta.color}18` },
                         ]}
                       >
-                        <View style={styles.cardHeader}>
-                          <View style={styles.tagBadge}>
-                            <FontAwesome5 name="bug" size={10} color="#FF4B4B" />
-                            <Text style={styles.tagText}>
-                              {question.errorCategory}
-                            </Text>
-                          </View>
+                        <FontAwesome5
+                          name="folder-open"
+                          size={15}
+                          color={subjectMeta.color}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.topicName}>{topic}</Text>
+                        <Text style={styles.topicSubInfo}>
+                          {items.length}{' '}
+                          {items.length === 1 ? 'questão errada' : 'questões erradas'} • Média: {avgTime}
+                        </Text>
+                      </View>
+                    </View>
 
-                          <View style={styles.headerRightActions}>
-                            <View style={styles.timeBadge}>
-                              <FontAwesome5
-                                name="stopwatch"
-                                size={12}
-                                color="#C40000"
-                              />
-                              <Text style={styles.timeText}>
-                                {question.timeSpent}
+                    <FontAwesome5
+                      name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                      size={15}
+                      color="#8CA0B3"
+                    />
+                  </TouchableOpacity>
+
+                  {/* Questões daquele Assunto */}
+                  {isExpanded && (
+                    <View style={styles.topicQuestionsList}>
+                      {items.map((question) => (
+                        <View
+                          key={question.id}
+                          style={[
+                            styles.questionCard,
+                            question.isFavorite && styles.favoriteHighlight,
+                          ]}
+                        >
+                          <View style={styles.cardHeader}>
+                            <View style={styles.tagBadge}>
+                              <FontAwesome5 name="bug" size={10} color="#FF4B4B" />
+                              <Text style={styles.tagText}>
+                                {question.errorCategory}
                               </Text>
                             </View>
 
-                            <TouchableOpacity
-                              onPress={() => toggleFavorite(question.id)}
-                              style={styles.favoriteButton}
-                            >
+                            <View style={styles.headerRightActions}>
+                              <View style={styles.timeBadge}>
+                                <FontAwesome5
+                                  name="stopwatch"
+                                  size={12}
+                                  color="#C40000"
+                                />
+                                <Text style={styles.timeText}>
+                                  {question.timeSpent}
+                                </Text>
+                              </View>
+
+                              <TouchableOpacity
+                                onPress={() => toggleFavorite(question.id)}
+                                style={styles.favoriteButton}
+                              >
+                                <FontAwesome5
+                                  name="star"
+                                  solid={question.isFavorite}
+                                  size={18}
+                                  color={
+                                    question.isFavorite ? '#F1C40F' : '#E2E8F0'
+                                  }
+                                />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+
+                          <Text style={styles.questionText}>{question.text}</Text>
+
+                          <View style={styles.contrastContainer}>
+                            <View style={styles.contrastRow}>
                               <FontAwesome5
-                                name="star"
-                                solid={question.isFavorite}
-                                size={18}
-                                color={
-                                  question.isFavorite ? '#F1C40F' : '#E2E8F0'
-                                }
+                                name="times"
+                                size={12}
+                                color="#FF4B4B"
+                                style={{ width: 20 }}
                               />
-                            </TouchableOpacity>
+                              <Text style={styles.contrastTextError}>
+                                {question.userOption}
+                              </Text>
+                            </View>
+                            <View style={styles.contrastDivider} />
+                            <View style={styles.contrastRow}>
+                              <FontAwesome5
+                                name="check"
+                                size={12}
+                                color="#58CC02"
+                                style={{ width: 20 }}
+                              />
+                              <Text style={styles.contrastTextSuccess}>
+                                {question.correctOption}
+                              </Text>
+                            </View>
                           </View>
-                        </View>
 
-                        <Text style={styles.questionText}>{question.text}</Text>
-
-                        <View style={styles.contrastContainer}>
-                          <View style={styles.contrastRow}>
-                            <FontAwesome5
-                              name="times"
-                              size={12}
-                              color="#FF4B4B"
-                              style={{ width: 20 }}
-                            />
-                            <Text style={styles.contrastTextError}>
-                              {question.userOption}
+                          <View style={styles.diagnosisBox}>
+                            <Text style={styles.diagnosisTitle}>Diagnóstico:</Text>
+                            <Text style={styles.diagnosisText}>
+                              {question.diagnosis}
                             </Text>
                           </View>
-                          <View style={styles.contrastDivider} />
-                          <View style={styles.contrastRow}>
+
+                          <TouchableOpacity style={styles.saveNotesButton}>
                             <FontAwesome5
-                              name="check"
+                              name="bookmark"
                               size={12}
-                              color="#58CC02"
-                              style={{ width: 20 }}
+                              color="#1CB0F6"
                             />
-                            <Text style={styles.contrastTextSuccess}>
-                              {question.correctOption}
+                            <Text style={styles.saveNotesText}>
+                              Salvar Anotação
                             </Text>
-                          </View>
+                          </TouchableOpacity>
                         </View>
-
-                        <View style={styles.diagnosisBox}>
-                          <Text style={styles.diagnosisTitle}>Diagnóstico:</Text>
-                          <Text style={styles.diagnosisText}>
-                            {question.diagnosis}
-                          </Text>
-                        </View>
-
-                        <TouchableOpacity style={styles.saveNotesButton}>
-                          <FontAwesome5
-                            name="bookmark"
-                            size={12}
-                            color="#1CB0F6"
-                          />
-                          <Text style={styles.saveNotesText}>
-                            Salvar Anotação
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
@@ -314,8 +391,19 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   backButton: { width: 40, height: 40, justifyContent: 'center' },
+  refreshBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'flex-end' },
   title: { fontSize: 20, fontWeight: 'bold', color: '#2C3A47' },
   scrollContent: { padding: 20, paddingBottom: 60 },
+  centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  loadingText: { marginTop: 12, fontSize: 15, color: '#8CA0B3', fontWeight: 'bold' },
+  errorText: { fontSize: 15, color: '#4B5563', textAlign: 'center', marginBottom: 16 },
+  retryBtn: {
+    backgroundColor: '#1CB0F6',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  retryBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
 
   summaryBanner: {
     flexDirection: 'row',
@@ -552,4 +640,3 @@ const styles = StyleSheet.create({
     color: '#1CB0F6',
   },
 });
-

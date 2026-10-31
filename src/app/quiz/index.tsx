@@ -1,9 +1,3 @@
-import { API_BASE_URL } from "@/constants/api";
-import { api } from "@/services/api";
-import { useUserStore } from "@/store/useUserStore";
-import { StreakBadge } from "@/components/StreakBadge";
-import { FontAwesome5 } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -21,28 +15,41 @@ import {
 } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { FontAwesome5 } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { api } from "@/services/api";
+import { useUserStore } from "@/store/useUserStore";
+import { StreakBadge } from "@/components/StreakBadge";
+import { useQuestionsQuery, QuizQuestion } from "@/hooks/useQuestionsQuery";
 
 const { width, height } = Dimensions.get("window");
-
-const API_URL = `${API_BASE_URL}/questions`;
 
 export default function QuizScreen() {
   const router = useRouter();
   const { userId, addXp, incrementAnsweredQuestions, completeQuestionStreakUpdate } = useUserStore();
 
   const params = useLocalSearchParams();
-  const day = params.day as string;
-  const difficulty = params.difficulty as string;
+  const day = params.day as string | undefined;
+  const difficulty = params.difficulty as string | undefined;
 
   const parsedLimit = params.limit ? Number(params.limit) : 10;
   const initialTimeInSeconds = params.time
     ? Number(params.time) * 60
     : parsedLimit * 180;
 
-  const [quizQuestions, setQuizQuestions] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const {
+    questions: fetchedQuestions,
+    isLoading,
+    error: queryError,
+    isOfflineData,
+    queueAnswerOffline,
+  } = useQuestionsQuery({
+    day,
+    difficulty,
+  });
+
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -52,54 +59,11 @@ export default function QuizScreen() {
   const [totalTime] = useState(initialTimeInSeconds);
 
   useEffect(() => {
-    async function fetchQuestions() {
-      try {
-        const response = await fetch(API_URL);
-        if (!response.ok) throw new Error("Falha ao conectar na API");
-
-        let data = await response.json();
-
-        if (day === "1") {
-          data = data.filter(
-            (q: any) =>
-              q.area.toLowerCase().includes("humanas") ||
-              q.area.toLowerCase().includes("linguagens") ||
-              q.area.toLowerCase().includes("ch") ||
-              q.area.toLowerCase().includes("lc"),
-          );
-        } else if (day === "2") {
-          data = data.filter(
-            (q: any) =>
-              q.area.toLowerCase().includes("natureza") ||
-              q.area.toLowerCase().includes("matemática") ||
-              q.area.toLowerCase().includes("cn") ||
-              q.area.toLowerCase().includes("mt"),
-          );
-        }
-
-        if (difficulty === "facil") {
-          data = data.filter((q: any) => q.errorRate && q.errorRate < 45);
-        } else if (difficulty === "medio") {
-          data = data.filter(
-            (q: any) => q.errorRate && q.errorRate >= 45 && q.errorRate <= 65,
-          );
-        } else if (difficulty === "dificil") {
-          data = data.filter((q: any) => q.errorRate && q.errorRate > 65);
-        }
-
-        const shuffled = data.sort(() => 0.5 - Math.random());
-        setQuizQuestions(shuffled.slice(0, parsedLimit));
-      } catch (err) {
-        setError(
-          "Não foi possível carregar as questões. Verifique a variável EXPO_PUBLIC_API_URL.",
-        );
-      } finally {
-        setIsLoading(false);
-      }
+    if (fetchedQuestions && fetchedQuestions.length > 0 && quizQuestions.length === 0) {
+      const shuffled = [...fetchedQuestions].sort(() => 0.5 - Math.random());
+      setQuizQuestions(shuffled.slice(0, parsedLimit));
     }
-
-    fetchQuestions();
-  }, [day, difficulty, parsedLimit]);
+  }, [fetchedQuestions, parsedLimit, quizQuestions.length]);
 
   // CRONÔMETRO OFICIAL: Roda solto e não pausa por nada, até chegar a zero!
   useEffect(() => {
@@ -124,14 +88,18 @@ export default function QuizScreen() {
   };
 
   /**
-   * Envia a alternativa selecionada para a API e, em caso de sucesso,
-   * atualiza na hora o estado global no Zustand (zerando gelinhos 🧊 e aumentando o fogo 🔥).
+   * Envia a alternativa selecionada para a API.
+   * Caso esteja offline, enfileira a resposta localmente via `queueAnswerOffline`
+   * para ser sincronizada na tela de resultados (`src/app/quiz/result.tsx`) quando a conexão voltar.
    */
   const handleSubmitAnswer = async () => {
     const currentQuestion = quizQuestions[currentQuestionIdx];
     if (selectedOption === null || isAnswered || isSubmitting || !currentQuestion) {
       return;
     }
+
+    const isCorrect = selectedOption === currentQuestion.correctAnswer;
+    const xpEarned = isCorrect ? 100 : 0;
 
     setIsSubmitting(true);
     try {
@@ -141,28 +109,22 @@ export default function QuizScreen() {
         selectedOption,
       });
 
-      // Sucesso na requisição: atualiza na hora o Zustand zerando os gelos e aumentando o fogo
       completeQuestionStreakUpdate(response?.streak);
-
-      if (selectedOption === currentQuestion.correctAnswer) {
-        addXp(100);
-      }
+      if (isCorrect) addXp(xpEarned);
       incrementAnsweredQuestions();
-
       setIsAnswered(true);
     } catch {
-      // Caso o endpoint /questions/answer falhe, tenta a rota de ofensiva /streak/complete-lesson
-      try {
-        const streakRes = await api.post("/streak/complete-lesson", { userId });
-        completeQuestionStreakUpdate(streakRes?.streak);
-      } catch {
-        // Atualização otimista local para garantir que o estado global reflita na interface
-        completeQuestionStreakUpdate();
-      }
+      // Se falhar a conexão com a API, salva na fila offline para sincronização posterior
+      await queueAnswerOffline({
+        userId,
+        questionId: currentQuestion.id,
+        selectedOption,
+        isCorrect,
+        xpEarned,
+      });
 
-      if (selectedOption === currentQuestion.correctAnswer) {
-        addXp(100);
-      }
+      completeQuestionStreakUpdate();
+      if (isCorrect) addXp(xpEarned);
       incrementAnsweredQuestions();
       setIsAnswered(true);
     } finally {
@@ -172,7 +134,7 @@ export default function QuizScreen() {
 
   const handleNext = () => {
     if (timeLeft === 0 || currentQuestionIdx === quizQuestions.length - 1) {
-      router.replace("/");
+      router.replace("/quiz/result" as any);
       return;
     }
     setCurrentQuestionIdx((prev) => prev + 1);
@@ -200,7 +162,7 @@ export default function QuizScreen() {
     );
   }
 
-  if (error || quizQuestions.length === 0) {
+  if (queryError || quizQuestions.length === 0) {
     return (
       <SafeAreaView style={[styles.container, styles.centerAll]}>
         <FontAwesome5
@@ -210,7 +172,7 @@ export default function QuizScreen() {
           style={{ marginBottom: 16 }}
         />
         <Text style={styles.errorText}>
-          {error || "Nenhuma questão encontrada para estes filtros."}
+          {queryError?.message || "Nenhuma questão encontrada para estes filtros."}
         </Text>
         <TouchableOpacity
           style={styles.retryButton}
@@ -261,6 +223,15 @@ export default function QuizScreen() {
         <StreakBadge />
       </View>
 
+      {isOfflineData && (
+        <View style={styles.offlineBanner}>
+          <FontAwesome5 name="cloud-download-alt" size={12} color="#D97706" />
+          <Text style={styles.offlineBannerText}>
+            Modo Offline ativo — Suas respostas serão sincronizadas ao concluir.
+          </Text>
+        </View>
+      )}
+
       <View style={styles.timerWrapper}>
         <View style={styles.timerHeader}>
           <FontAwesome5 name="stopwatch" size={16} color={timerColor} />
@@ -289,7 +260,9 @@ export default function QuizScreen() {
         <View style={styles.questionBox}>
           <View style={styles.tagsRow}>
             <Text style={styles.subjectLabel}>{question.subject}</Text>
-            <Text style={styles.yearLabel}>ENEM {question.year}</Text>
+            {question.year && (
+              <Text style={styles.yearLabel}>ENEM {question.year}</Text>
+            )}
           </View>
 
           <Markdown
@@ -404,7 +377,7 @@ export default function QuizScreen() {
           </Text>
           <TouchableOpacity
             style={styles.continueButton}
-            onPress={() => router.replace("/")}
+            onPress={() => router.replace("/quiz/result" as any)}
           >
             <Text style={styles.continueButtonText}>Finalizar Treino</Text>
           </TouchableOpacity>
@@ -513,7 +486,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingTop: 10,
-    paddingBottom: 20,
+    paddingBottom: 12,
   },
   closeButton: { width: 40, height: 40, justifyContent: "center" },
   progressContainer: {
@@ -526,6 +499,23 @@ const styles = StyleSheet.create({
   },
   progressFill: { height: "100%", backgroundColor: "#1CB0F6", borderRadius: 6 },
   progressText: { fontSize: 14, fontWeight: "bold", color: "#8CA0B3" },
+
+  offlineBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#FEF3C7",
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  offlineBannerText: {
+    fontSize: 12,
+    fontWeight: "bold",
+    color: "#B45309",
+  },
 
   timerWrapper: {
     paddingHorizontal: 20,

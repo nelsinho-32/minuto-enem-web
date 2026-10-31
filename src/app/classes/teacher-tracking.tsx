@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,21 +7,101 @@ import {
   TouchableOpacity,
   TextInput,
   LayoutAnimation,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { FontAwesome5 } from '@expo/vector-icons';
-import {
-  TeacherAssignment,
-  TeacherMaterial,
-  INITIAL_TEACHER_ASSIGNMENTS,
-  INITIAL_TEACHER_MATERIALS,
-} from '@/constants/teacherTrackData';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api } from '@/services/api';
 import { useUserStore } from '@/store/useUserStore';
 import { ConfirmModal } from '@/components/ConfirmModal';
 
+const TEACHER_TRACKING_CACHE_KEY = '@minuto_enem:teacher_tracking_cache_v1';
+
+export interface CommentItem {
+  id: string;
+  author: string;
+  role: 'STUDENT' | 'TEACHER';
+  date: string;
+  text: string;
+}
+
+export interface TeacherAssignment {
+  id: string;
+  classId?: string;
+  subject: string;
+  topic: string;
+  title: string;
+  dueDate: string;
+  totalStudents: number;
+  submittedCount: number;
+  gradedCount: number;
+  averageScore: number;
+  color: string;
+  icon: string;
+  instructions: string;
+  comments: CommentItem[];
+  submissions: {
+    studentId: string;
+    studentName: string;
+    submittedAt: string;
+    status: 'ENTREGUE' | 'PENDENTE' | 'CORRIGIDO';
+    score?: number;
+    timeSpent: string;
+  }[];
+}
+
+export interface TeacherMaterial {
+  id: string;
+  classId?: string;
+  subject: string;
+  topic: string;
+  title: string;
+  type: 'pdf' | 'video' | 'link' | 'tip';
+  dateAdded: string;
+  viewsCount: number;
+  downloadsCount: number;
+  color: string;
+  icon: string;
+  description: string;
+  url?: string;
+  comments: CommentItem[];
+}
+
+export interface TeacherTrackingResponse {
+  assignments: TeacherAssignment[];
+  materials: TeacherMaterial[];
+}
+
+async function fetchTeacherTracking(classId?: string): Promise<TeacherTrackingResponse> {
+  const endpoint = classId
+    ? `/classes/teacher-tracking?classId=${encodeURIComponent(classId)}`
+    : '/classes/teacher-tracking';
+
+  try {
+    const response = await api.get<TeacherTrackingResponse>(endpoint);
+    const normalized: TeacherTrackingResponse = {
+      assignments: Array.isArray(response?.assignments) ? response.assignments : [],
+      materials: Array.isArray(response?.materials) ? response.materials : [],
+    };
+    await AsyncStorage.setItem(TEACHER_TRACKING_CACHE_KEY, JSON.stringify(normalized));
+    return normalized;
+  } catch (err) {
+    const cached = await AsyncStorage.getItem(TEACHER_TRACKING_CACHE_KEY);
+    if (cached) {
+      return JSON.parse(cached) as TeacherTrackingResponse;
+    }
+    throw err instanceof Error
+      ? err
+      : new Error('Não foi possível carregar os dados de acompanhamento do professor.');
+  }
+}
+
 export default function TeacherTrackingScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { classId } = useLocalSearchParams<{ classId?: string }>();
   const user = useUserStore((state) => state.user);
 
@@ -29,9 +109,22 @@ export default function TeacherTrackingScreen() {
   const [selectedSubject, setSelectedSubject] = useState<string>('TODAS');
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
-  // Estados de dados
-  const [assignments, setAssignments] = useState<TeacherAssignment[]>(INITIAL_TEACHER_ASSIGNMENTS);
-  const [materials, setMaterials] = useState<TeacherMaterial[]>(INITIAL_TEACHER_MATERIALS);
+  const { data, isLoading, error, refetch } = useQuery<TeacherTrackingResponse, Error>({
+    queryKey: ['teacher-tracking', classId ?? 'all'],
+    queryFn: () => fetchTeacherTracking(classId),
+    networkMode: 'offlineFirst',
+  });
+
+  // Estados de dados locais para atualização otimista imediata
+  const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
+  const [materials, setMaterials] = useState<TeacherMaterial[]>([]);
+
+  useEffect(() => {
+    if (data) {
+      setAssignments(data.assignments);
+      setMaterials(data.materials);
+    }
+  }, [data]);
 
   // Estados para comentários
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
@@ -50,6 +143,40 @@ export default function TeacherTrackingScreen() {
     title: '',
     message: '',
     action: () => {},
+  });
+
+  const commentMutation = useMutation({
+    mutationFn: async ({
+      itemId,
+      isAssignment,
+      comment,
+    }: {
+      itemId: string;
+      isAssignment: boolean;
+      comment: CommentItem;
+    }) => {
+      const resource = isAssignment ? 'assignments' : 'materials';
+      return api.post(`/classes/${resource}/${itemId}/comments`, comment);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['teacher-tracking'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async ({
+      itemId,
+      isAssignment,
+    }: {
+      itemId: string;
+      isAssignment: boolean;
+    }) => {
+      const resource = isAssignment ? 'assignments' : 'materials';
+      return api.delete(`/classes/${resource}/${itemId}`);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['teacher-tracking'] });
+    },
   });
 
   // Filtra por disciplina
@@ -91,7 +218,7 @@ export default function TeacherTrackingScreen() {
     const text = (commentInputs[itemId] || '').trim();
     if (!text) return;
 
-    const newComment = {
+    const newComment: CommentItem = {
       id: `comm_${Date.now()}`,
       author: user?.name || (user?.role === 'TEACHER' ? 'Professor' : 'Aluno'),
       role: (user?.role as 'STUDENT' | 'TEACHER') || 'TEACHER',
@@ -118,6 +245,7 @@ export default function TeacherTrackingScreen() {
     }
 
     setCommentInputs((prev) => ({ ...prev, [itemId]: '' }));
+    commentMutation.mutate({ itemId, isAssignment, comment: newComment });
   };
 
   // Pop-confirm para excluir lista ou material
@@ -131,6 +259,7 @@ export default function TeacherTrackingScreen() {
       icon: 'trash-alt',
       action: () => {
         setAssignments((prev) => prev.filter((a) => a.id !== item.id));
+        deleteMutation.mutate({ itemId: item.id, isAssignment: true });
         setConfirmModal((prev) => ({ ...prev, visible: false }));
       },
     });
@@ -146,12 +275,12 @@ export default function TeacherTrackingScreen() {
       icon: 'trash-alt',
       action: () => {
         setMaterials((prev) => prev.filter((m) => m.id !== item.id));
+        deleteMutation.mutate({ itemId: item.id, isAssignment: false });
         setConfirmModal((prev) => ({ ...prev, visible: false }));
       },
     });
   };
 
-  // Pop-confirm para sair da tela caso queira confirmação
   const requestExit = () => {
     router.back();
   };
@@ -164,449 +293,464 @@ export default function TeacherTrackingScreen() {
           <FontAwesome5 name="arrow-left" size={18} color="#2C3A47" />
         </TouchableOpacity>
         <Text style={styles.title}>Painel do Professor</Text>
-        <View style={{ width: 40 }} />
+        <TouchableOpacity onPress={() => refetch()} style={styles.refreshBtn}>
+          <FontAwesome5 name="sync-alt" size={16} color="#1CB0F6" />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={styles.pageSubtitle}>
-          Acompanhe o rendimento da turma nas listas entregues, taxa de envio e interação nos materiais didáticos.
-        </Text>
-
-        {/* Abas Superiores: Exercícios vs Materiais */}
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'exercicios' && styles.tabButtonActive]}
-            onPress={() => {
-              setActiveTab('exercicios');
-              setExpandedItemId(null);
-            }}
-          >
-            <FontAwesome5
-              name="tasks"
-              size={13}
-              color={activeTab === 'exercicios' ? '#1CB0F6' : '#8CA0B3'}
-              style={{ marginRight: 6 }}
-            />
-            <Text
-              style={[styles.tabText, activeTab === 'exercicios' && styles.tabTextActive]}
-            >
-              Listas de Exercícios ({assignments.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'materiais' && styles.tabButtonActive]}
-            onPress={() => {
-              setActiveTab('materiais');
-              setExpandedItemId(null);
-            }}
-          >
-            <FontAwesome5
-              name="folder-open"
-              size={13}
-              color={activeTab === 'materiais' ? '#1CB0F6' : '#8CA0B3'}
-              style={{ marginRight: 6 }}
-            />
-            <Text
-              style={[styles.tabText, activeTab === 'materiais' && styles.tabTextActive]}
-            >
-              Materiais Passados ({materials.length})
-            </Text>
+      {isLoading ? (
+        <View style={styles.centerState}>
+          <ActivityIndicator size="large" color="#1CB0F6" />
+          <Text style={styles.loadingText}>Carregando painel do professor...</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.centerState}>
+          <FontAwesome5
+            name="exclamation-circle"
+            size={44}
+            color="#FF4B4B"
+            style={{ marginBottom: 12 }}
+          />
+          <Text style={styles.errorText}>{error.message}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()}>
+            <Text style={styles.retryBtnText}>Tentar Novamente</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Filtro Rápido de Disciplinas */}
+      ) : (
         <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterScroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
         >
-          {subjectsList.map((sub) => {
-            const isSelected = selectedSubject === sub;
-            return (
-              <TouchableOpacity
-                key={sub}
-                style={[styles.filterChip, isSelected && styles.filterChipActive]}
-                onPress={() => setSelectedSubject(sub)}
+          <Text style={styles.pageSubtitle}>
+            Acompanhe o rendimento da turma nas listas entregues, taxa de envio e interação nos materiais didáticos.
+          </Text>
+
+          {/* Abas Superiores: Exercícios vs Materiais */}
+          <View style={styles.tabContainer}>
+            <TouchableOpacity
+              style={[styles.tabButton, activeTab === 'exercicios' && styles.tabButtonActive]}
+              onPress={() => {
+                setActiveTab('exercicios');
+                setExpandedItemId(null);
+              }}
+            >
+              <FontAwesome5
+                name="tasks"
+                size={13}
+                color={activeTab === 'exercicios' ? '#1CB0F6' : '#8CA0B3'}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[styles.tabText, activeTab === 'exercicios' && styles.tabTextActive]}
               >
-                <Text
-                  style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}
+                Listas de Exercícios ({assignments.length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.tabButton, activeTab === 'materiais' && styles.tabButtonActive]}
+              onPress={() => {
+                setActiveTab('materiais');
+                setExpandedItemId(null);
+              }}
+            >
+              <FontAwesome5
+                name="folder-open"
+                size={13}
+                color={activeTab === 'materiais' ? '#1CB0F6' : '#8CA0B3'}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[styles.tabText, activeTab === 'materiais' && styles.tabTextActive]}
+              >
+                Materiais Passados ({materials.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Filtro Rápido de Disciplinas */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScroll}
+          >
+            {subjectsList.map((sub) => {
+              const isSelected = selectedSubject === sub;
+              return (
+                <TouchableOpacity
+                  key={sub}
+                  style={[styles.filterChip, isSelected && styles.filterChipActive]}
+                  onPress={() => setSelectedSubject(sub)}
                 >
-                  {sub}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
-        {/* ========================================== */}
-        {/* CONTEÚDO 1: LISTAS DE EXERCÍCIOS           */}
-        {/* ========================================== */}
-        {activeTab === 'exercicios' && (
-          <View style={styles.itemsList}>
-            {filteredAssignments.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <FontAwesome5 name="check-circle" size={40} color="#E2E8F0" style={{ marginBottom: 12 }} />
-                <Text style={styles.emptyText}>Nenhuma lista encontrada para este filtro.</Text>
-              </View>
-            ) : (
-              filteredAssignments.map((assignment) => {
-                const isExpanded = expandedItemId === assignment.id;
-                const submissionRate = Math.round(
-                  (assignment.submittedCount / assignment.totalStudents) * 100
-                );
-
-                return (
-                  <View
-                    key={assignment.id}
-                    style={[styles.itemCard, { borderLeftColor: assignment.color }]}
+                  <Text
+                    style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}
                   >
-                    {/* Cabeçalho do Card */}
-                    <TouchableOpacity
-                      style={styles.itemHeader}
-                      activeOpacity={0.8}
-                      onPress={() => toggleExpand(assignment.id)}
+                    {sub}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {/* ========================================== */}
+          {/* CONTEÚDO 1: LISTAS DE EXERCÍCIOS           */}
+          {/* ========================================== */}
+          {activeTab === 'exercicios' && (
+            <View style={styles.itemsList}>
+              {filteredAssignments.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <FontAwesome5 name="check-circle" size={40} color="#E2E8F0" style={{ marginBottom: 12 }} />
+                  <Text style={styles.emptyText}>Nenhuma lista encontrada para este filtro.</Text>
+                </View>
+              ) : (
+                filteredAssignments.map((assignment) => {
+                  const isExpanded = expandedItemId === assignment.id;
+                  const submissionRate =
+                    assignment.totalStudents > 0
+                      ? Math.round((assignment.submittedCount / assignment.totalStudents) * 100)
+                      : 0;
+
+                  return (
+                    <View
+                      key={assignment.id}
+                      style={[styles.itemCard, { borderLeftColor: assignment.color }]}
                     >
-                      <View style={styles.itemHeaderLeft}>
-                        <View
-                          style={[
-                            styles.itemIconCircle,
-                            { backgroundColor: `${assignment.color}20` },
-                          ]}
-                        >
-                          <FontAwesome5
-                            name={assignment.icon}
-                            size={16}
-                            color={assignment.color}
-                          />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <View style={styles.badgeRow}>
-                            <Text style={[styles.subjectTag, { color: assignment.color }]}>
-                              {assignment.subject}
-                            </Text>
-                            <Text style={styles.topicTag}>• {assignment.topic}</Text>
+                      {/* Cabeçalho do Card */}
+                      <TouchableOpacity
+                        style={styles.itemHeader}
+                        activeOpacity={0.8}
+                        onPress={() => toggleExpand(assignment.id)}
+                      >
+                        <View style={styles.itemHeaderLeft}>
+                          <View
+                            style={[
+                              styles.itemIconCircle,
+                              { backgroundColor: `${assignment.color}20` },
+                            ]}
+                          >
+                            <FontAwesome5
+                              name={assignment.icon}
+                              size={16}
+                              color={assignment.color}
+                            />
                           </View>
-                          <Text style={styles.itemTitle}>{assignment.title}</Text>
-                        </View>
-                      </View>
-
-                      <FontAwesome5
-                        name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                        size={14}
-                        color="#8CA0B3"
-                        style={{ marginLeft: 8 }}
-                      />
-                    </TouchableOpacity>
-
-                    {/* Barra de Progresso de Entregas */}
-                    <View style={styles.progressContainer}>
-                      <View style={styles.progressHeaderRow}>
-                        <Text style={styles.progressLabel}>
-                          Taxa de Entregas da Turma
-                        </Text>
-                        <Text style={styles.progressValue}>
-                          {assignment.submittedCount}/{assignment.totalStudents} ({submissionRate}%)
-                        </Text>
-                      </View>
-                      <View style={styles.progressBarBg}>
-                        <View
-                          style={[
-                            styles.progressBarFill,
-                            { width: `${submissionRate}%`, backgroundColor: assignment.color },
-                          ]}
-                        />
-                      </View>
-                    </View>
-
-                    {/* Métricas Rápidas */}
-                    <View style={styles.metricsRow}>
-                      <View style={styles.metricItem}>
-                        <Text style={styles.metricValue}>{assignment.submittedCount}</Text>
-                        <Text style={styles.metricLabel}>Entregaram</Text>
-                      </View>
-                      <View style={styles.metricDivider} />
-                      <View style={styles.metricItem}>
-                        <Text style={styles.metricValue}>{assignment.gradedCount}</Text>
-                        <Text style={styles.metricLabel}>Corrigidos</Text>
-                      </View>
-                      <View style={styles.metricDivider} />
-                      <View style={styles.metricItem}>
-                        <Text style={[styles.metricValue, { color: '#58CC02' }]}>
-                          {assignment.averageScore}
-                        </Text>
-                        <Text style={styles.metricLabel}>Média Geral</Text>
-                      </View>
-                    </View>
-
-                    {/* CONTEÚDO EXPANDIDO: Detalhes, Submissões e Comentários estilo Google Classroom */}
-                    {isExpanded && (
-                      <View style={styles.expandedArea}>
-                        {/* Instruções */}
-                        <View style={styles.instructionBox}>
-                          <Text style={styles.instructionTitle}>Instruções aos Alunos:</Text>
-                          <Text style={styles.instructionText}>{assignment.instructions}</Text>
-                        </View>
-
-                        {/* Tabela / Relação de Alunos */}
-                        <Text style={styles.subSectionTitle}>
-                          Entregas Individuais dos Alunos
-                        </Text>
-                        <View style={styles.submissionsCard}>
-                          {assignment.submissions.map((sub, idx) => (
-                            <View key={idx} style={styles.submissionRow}>
-                              <View style={styles.studentAvatar}>
-                                <Text style={styles.studentAvatarText}>
-                                  {sub.studentName.charAt(0)}
-                                </Text>
-                              </View>
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.studentNameText}>{sub.studentName}</Text>
-                                <Text style={styles.studentSubTime}>
-                                  {sub.submittedAt !== '-' ? `Entregue: ${sub.submittedAt} (${sub.timeSpent})` : 'Ainda não entregou'}
-                                </Text>
-                              </View>
-                              <View style={styles.statusBadge}>
-                                <Text
-                                  style={[
-                                    styles.statusText,
-                                    sub.status === 'CORRIGIDO' && styles.statusCorrect,
-                                    sub.status === 'ENTREGUE' && styles.statusDelivered,
-                                    sub.status === 'PENDENTE' && styles.statusPending,
-                                  ]}
-                                >
-                                  {sub.status === 'CORRIGIDO' ? `Nota: ${sub.score}` : sub.status}
-                                </Text>
-                              </View>
+                          <View style={{ flex: 1 }}>
+                            <View style={styles.badgeRow}>
+                              <Text style={[styles.subjectTag, { color: assignment.color }]}>
+                                {assignment.subject}
+                              </Text>
+                              <Text style={styles.topicTag}>• {assignment.topic}</Text>
                             </View>
-                          ))}
-                        </View>
-
-                        {/* COMENTÁRIOS DA ATIVIDADE (Estilo Classroom) */}
-                        <Text style={styles.subSectionTitle}>
-                          Comentários da Atividade ({assignment.comments.length})
-                        </Text>
-                        <View style={styles.commentsCard}>
-                          {assignment.comments.length === 0 ? (
-                            <Text style={styles.noCommentsText}>
-                              Nenhum comentário nesta atividade ainda. Alunos e professores podem tirar dúvidas aqui.
-                            </Text>
-                          ) : (
-                            assignment.comments.map((comment) => (
-                              <View key={comment.id} style={styles.commentItem}>
-                                <View style={styles.commentHeader}>
-                                  <View style={styles.commentAvatar}>
-                                    <FontAwesome5
-                                      name={comment.role === 'TEACHER' ? 'chalkboard-teacher' : 'user'}
-                                      size={11}
-                                      color="#FFF"
-                                    />
-                                  </View>
-                                  <Text style={styles.commentAuthor}>
-                                    {comment.author}{' '}
-                                    {comment.role === 'TEACHER' && (
-                                      <Text style={styles.teacherTag}>(Professor)</Text>
-                                    )}
-                                  </Text>
-                                  <Text style={styles.commentDate}>{comment.date}</Text>
-                                </View>
-                                <Text style={styles.commentBody}>{comment.text}</Text>
-                              </View>
-                            ))
-                          )}
-
-                          {/* Campo de Entrada de Comentário */}
-                          <View style={styles.commentInputRow}>
-                            <TextInput
-                              style={styles.commentInput}
-                              placeholder="Adicionar comentário à atividade..."
-                              placeholderTextColor="#A0AEC0"
-                              value={commentInputs[assignment.id] || ''}
-                              onChangeText={(txt) =>
-                                setCommentInputs((prev) => ({ ...prev, [assignment.id]: txt }))
-                              }
-                            />
-                            <TouchableOpacity
-                              style={styles.sendCommentBtn}
-                              onPress={() => handleAddComment(assignment.id, true)}
-                            >
-                              <FontAwesome5 name="paper-plane" size={12} color="#FFF" />
-                            </TouchableOpacity>
+                            <Text style={styles.itemTitle}>{assignment.title}</Text>
                           </View>
                         </View>
 
-                        {/* Ações do Professor */}
-                        <View style={styles.cardActionsRow}>
-                          <TouchableOpacity
-                            style={styles.deleteActionBtn}
-                            onPress={() => requestDeleteAssignment(assignment)}
-                          >
-                            <FontAwesome5 name="trash-alt" size={12} color="#FF4B4B" />
-                            <Text style={styles.deleteActionText}>Excluir Lista</Text>
-                          </TouchableOpacity>
+                        <FontAwesome5
+                          name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                          size={14}
+                          color="#8CA0B3"
+                          style={{ marginLeft: 8 }}
+                        />
+                      </TouchableOpacity>
+
+                      {/* Barra de Progresso de Entregas */}
+                      <View style={styles.progressContainer}>
+                        <View style={styles.progressHeaderRow}>
+                          <Text style={styles.progressLabel}>
+                            Taxa de Entregas da Turma
+                          </Text>
+                          <Text style={styles.progressValue}>
+                            {assignment.submittedCount}/{assignment.totalStudents} ({submissionRate}%)
+                          </Text>
                         </View>
-                      </View>
-                    )}
-                  </View>
-                );
-              })
-            )}
-          </View>
-        )}
-
-        {/* ========================================== */}
-        {/* CONTEÚDO 2: MATERIAIS PASSADOS             */}
-        {/* ========================================== */}
-        {activeTab === 'materiais' && (
-          <View style={styles.itemsList}>
-            {filteredMaterials.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <FontAwesome5 name="folder-open" size={40} color="#E2E8F0" style={{ marginBottom: 12 }} />
-                <Text style={styles.emptyText}>Nenhum material didático encontrado.</Text>
-              </View>
-            ) : (
-              filteredMaterials.map((material) => {
-                const isExpanded = expandedItemId === material.id;
-
-                return (
-                  <View
-                    key={material.id}
-                    style={[styles.itemCard, { borderLeftColor: material.color }]}
-                  >
-                    <TouchableOpacity
-                      style={styles.itemHeader}
-                      activeOpacity={0.8}
-                      onPress={() => toggleExpand(material.id)}
-                    >
-                      <View style={styles.itemHeaderLeft}>
-                        <View
-                          style={[
-                            styles.itemIconCircle,
-                            { backgroundColor: `${material.color}20` },
-                          ]}
-                        >
-                          <FontAwesome5
-                            name={material.icon}
-                            size={16}
-                            color={material.color}
+                        <View style={styles.progressBarBg}>
+                          <View
+                            style={[
+                              styles.progressBarFill,
+                              { width: `${submissionRate}%`, backgroundColor: assignment.color },
+                            ]}
                           />
                         </View>
-                        <View style={{ flex: 1 }}>
-                          <View style={styles.badgeRow}>
-                            <Text style={[styles.subjectTag, { color: material.color }]}>
-                              {material.subject}
-                            </Text>
-                            <Text style={styles.topicTag}>• {material.topic}</Text>
+                      </View>
+
+                      {/* Métricas Rápidas */}
+                      <View style={styles.metricsRow}>
+                        <View style={styles.metricItem}>
+                          <Text style={styles.metricValue}>{assignment.submittedCount}</Text>
+                          <Text style={styles.metricLabel}>Entregaram</Text>
+                        </View>
+                        <View style={styles.metricDivider} />
+                        <View style={styles.metricItem}>
+                          <Text style={styles.metricValue}>{assignment.gradedCount}</Text>
+                          <Text style={styles.metricLabel}>Corrigidos</Text>
+                        </View>
+                        <View style={styles.metricDivider} />
+                        <View style={styles.metricItem}>
+                          <Text style={[styles.metricValue, { color: '#58CC02' }]}>
+                            {assignment.averageScore}
+                          </Text>
+                          <Text style={styles.metricLabel}>Média Geral</Text>
+                        </View>
+                      </View>
+
+                      {/* CONTEÚDO EXPANDIDO */}
+                      {isExpanded && (
+                        <View style={styles.expandedArea}>
+                          <View style={styles.instructionBox}>
+                            <Text style={styles.instructionTitle}>Instruções aos Alunos:</Text>
+                            <Text style={styles.instructionText}>{assignment.instructions}</Text>
                           </View>
-                          <Text style={styles.itemTitle}>{material.title}</Text>
-                        </View>
-                      </View>
 
-                      <FontAwesome5
-                        name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                        size={14}
-                        color="#8CA0B3"
-                        style={{ marginLeft: 8 }}
-                      />
-                    </TouchableOpacity>
-
-                    {/* Estatísticas de Acesso ao Material */}
-                    <View style={styles.materialMetricsRow}>
-                      <View style={styles.matMetric}>
-                        <FontAwesome5 name="eye" size={12} color="#8CA0B3" />
-                        <Text style={styles.matMetricText}>{material.viewsCount} visualizações</Text>
-                      </View>
-                      <View style={styles.matMetric}>
-                        <FontAwesome5 name="download" size={12} color="#8CA0B3" />
-                        <Text style={styles.matMetricText}>{material.downloadsCount} downloads</Text>
-                      </View>
-                      <View style={styles.matMetric}>
-                        <FontAwesome5 name="comments" size={12} color="#8CA0B3" />
-                        <Text style={styles.matMetricText}>{material.comments.length} comentários</Text>
-                      </View>
-                    </View>
-
-                    {/* EXPANDIDO: Descrição e Comentários */}
-                    {isExpanded && (
-                      <View style={styles.expandedArea}>
-                        <View style={styles.instructionBox}>
-                          <Text style={styles.instructionTitle}>Descrição do Conteúdo:</Text>
-                          <Text style={styles.instructionText}>{material.description}</Text>
-                        </View>
-
-                        {/* COMENTÁRIOS DO MATERIAL (Estilo Classroom) */}
-                        <Text style={styles.subSectionTitle}>
-                          Comentários e Dúvidas ({material.comments.length})
-                        </Text>
-                        <View style={styles.commentsCard}>
-                          {material.comments.length === 0 ? (
-                            <Text style={styles.noCommentsText}>
-                              Nenhum comentário sobre este material ainda.
-                            </Text>
-                          ) : (
-                            material.comments.map((comment) => (
-                              <View key={comment.id} style={styles.commentItem}>
-                                <View style={styles.commentHeader}>
-                                  <View style={styles.commentAvatar}>
-                                    <FontAwesome5
-                                      name={comment.role === 'TEACHER' ? 'chalkboard-teacher' : 'user'}
-                                      size={11}
-                                      color="#FFF"
-                                    />
-                                  </View>
-                                  <Text style={styles.commentAuthor}>
-                                    {comment.author}{' '}
-                                    {comment.role === 'TEACHER' && (
-                                      <Text style={styles.teacherTag}>(Professor)</Text>
-                                    )}
+                          <Text style={styles.subSectionTitle}>
+                            Entregas Individuais dos Alunos
+                          </Text>
+                          <View style={styles.submissionsCard}>
+                            {assignment.submissions.map((sub, idx) => (
+                              <View key={idx} style={styles.submissionRow}>
+                                <View style={styles.studentAvatar}>
+                                  <Text style={styles.studentAvatarText}>
+                                    {sub.studentName.charAt(0)}
                                   </Text>
-                                  <Text style={styles.commentDate}>{comment.date}</Text>
                                 </View>
-                                <Text style={styles.commentBody}>{comment.text}</Text>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.studentNameText}>{sub.studentName}</Text>
+                                  <Text style={styles.studentSubTime}>
+                                    {sub.submittedAt !== '-' ? `Entregue: ${sub.submittedAt} (${sub.timeSpent})` : 'Ainda não entregou'}
+                                  </Text>
+                                </View>
+                                <View style={styles.statusBadge}>
+                                  <Text
+                                    style={[
+                                      styles.statusText,
+                                      sub.status === 'CORRIGIDO' && styles.statusCorrect,
+                                      sub.status === 'ENTREGUE' && styles.statusDelivered,
+                                      sub.status === 'PENDENTE' && styles.statusPending,
+                                    ]}
+                                  >
+                                    {sub.status === 'CORRIGIDO' ? `Nota: ${sub.score}` : sub.status}
+                                  </Text>
+                                </View>
                               </View>
-                            ))
-                          )}
+                            ))}
+                          </View>
 
-                          <View style={styles.commentInputRow}>
-                            <TextInput
-                              style={styles.commentInput}
-                              placeholder="Fazer um comentário ou pergunta..."
-                              placeholderTextColor="#A0AEC0"
-                              value={commentInputs[material.id] || ''}
-                              onChangeText={(txt) =>
-                                setCommentInputs((prev) => ({ ...prev, [material.id]: txt }))
-                              }
-                            />
+                          <Text style={styles.subSectionTitle}>
+                            Comentários da Atividade ({assignment.comments.length})
+                          </Text>
+                          <View style={styles.commentsCard}>
+                            {assignment.comments.length === 0 ? (
+                              <Text style={styles.noCommentsText}>
+                                Nenhum comentário nesta atividade ainda. Alunos e professores podem tirar dúvidas aqui.
+                              </Text>
+                            ) : (
+                              assignment.comments.map((comment) => (
+                                <View key={comment.id} style={styles.commentItem}>
+                                  <View style={styles.commentHeader}>
+                                    <View style={styles.commentAvatar}>
+                                      <FontAwesome5
+                                        name={comment.role === 'TEACHER' ? 'chalkboard-teacher' : 'user'}
+                                        size={11}
+                                        color="#FFF"
+                                      />
+                                    </View>
+                                    <Text style={styles.commentAuthor}>
+                                      {comment.author}{' '}
+                                      {comment.role === 'TEACHER' && (
+                                        <Text style={styles.teacherTag}>(Professor)</Text>
+                                      )}
+                                    </Text>
+                                    <Text style={styles.commentDate}>{comment.date}</Text>
+                                  </View>
+                                  <Text style={styles.commentBody}>{comment.text}</Text>
+                                </View>
+                              ))
+                            )}
+
+                            <View style={styles.commentInputRow}>
+                              <TextInput
+                                style={styles.commentInput}
+                                placeholder="Adicionar comentário à atividade..."
+                                placeholderTextColor="#A0AEC0"
+                                value={commentInputs[assignment.id] || ''}
+                                onChangeText={(txt) =>
+                                  setCommentInputs((prev) => ({ ...prev, [assignment.id]: txt }))
+                                }
+                              />
+                              <TouchableOpacity
+                                style={styles.sendCommentBtn}
+                                onPress={() => handleAddComment(assignment.id, true)}
+                              >
+                                <FontAwesome5 name="paper-plane" size={12} color="#FFF" />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+
+                          <View style={styles.cardActionsRow}>
                             <TouchableOpacity
-                              style={styles.sendCommentBtn}
-                              onPress={() => handleAddComment(material.id, false)}
+                              style={styles.deleteActionBtn}
+                              onPress={() => requestDeleteAssignment(assignment)}
                             >
-                              <FontAwesome5 name="paper-plane" size={12} color="#FFF" />
+                              <FontAwesome5 name="trash-alt" size={12} color="#FF4B4B" />
+                              <Text style={styles.deleteActionText}>Excluir Lista</Text>
                             </TouchableOpacity>
                           </View>
                         </View>
+                      )}
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          )}
 
-                        <View style={styles.cardActionsRow}>
-                          <TouchableOpacity
-                            style={styles.deleteActionBtn}
-                            onPress={() => requestDeleteMaterial(material)}
+          {/* ========================================== */}
+          {/* CONTEÚDO 2: MATERIAIS PASSADOS             */}
+          {/* ========================================== */}
+          {activeTab === 'materiais' && (
+            <View style={styles.itemsList}>
+              {filteredMaterials.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <FontAwesome5 name="folder-open" size={40} color="#E2E8F0" style={{ marginBottom: 12 }} />
+                  <Text style={styles.emptyText}>Nenhum material didático encontrado.</Text>
+                </View>
+              ) : (
+                filteredMaterials.map((material) => {
+                  const isExpanded = expandedItemId === material.id;
+
+                  return (
+                    <View
+                      key={material.id}
+                      style={[styles.itemCard, { borderLeftColor: material.color }]}
+                    >
+                      <TouchableOpacity
+                        style={styles.itemHeader}
+                        activeOpacity={0.8}
+                        onPress={() => toggleExpand(material.id)}
+                      >
+                        <View style={styles.itemHeaderLeft}>
+                          <View
+                            style={[
+                              styles.itemIconCircle,
+                              { backgroundColor: `${material.color}20` },
+                            ]}
                           >
-                            <FontAwesome5 name="trash-alt" size={12} color="#FF4B4B" />
-                            <Text style={styles.deleteActionText}>Excluir Material</Text>
-                          </TouchableOpacity>
+                            <FontAwesome5
+                              name={material.icon}
+                              size={16}
+                              color={material.color}
+                            />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <View style={styles.badgeRow}>
+                              <Text style={[styles.subjectTag, { color: material.color }]}>
+                                {material.subject}
+                              </Text>
+                              <Text style={styles.topicTag}>• {material.topic}</Text>
+                            </View>
+                            <Text style={styles.itemTitle}>{material.title}</Text>
+                          </View>
+                        </View>
+
+                        <FontAwesome5
+                          name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                          size={14}
+                          color="#8CA0B3"
+                          style={{ marginLeft: 8 }}
+                        />
+                      </TouchableOpacity>
+
+                      <View style={styles.materialMetricsRow}>
+                        <View style={styles.matMetric}>
+                          <FontAwesome5 name="eye" size={12} color="#8CA0B3" />
+                          <Text style={styles.matMetricText}>{material.viewsCount} visualizações</Text>
+                        </View>
+                        <View style={styles.matMetric}>
+                          <FontAwesome5 name="download" size={12} color="#8CA0B3" />
+                          <Text style={styles.matMetricText}>{material.downloadsCount} downloads</Text>
+                        </View>
+                        <View style={styles.matMetric}>
+                          <FontAwesome5 name="comments" size={12} color="#8CA0B3" />
+                          <Text style={styles.matMetricText}>{material.comments.length} comentários</Text>
                         </View>
                       </View>
-                    )}
-                  </View>
-                );
-              })
-            )}
-          </View>
-        )}
-      </ScrollView>
+
+                      {isExpanded && (
+                        <View style={styles.expandedArea}>
+                          <View style={styles.instructionBox}>
+                            <Text style={styles.instructionTitle}>Descrição do Conteúdo:</Text>
+                            <Text style={styles.instructionText}>{material.description}</Text>
+                          </View>
+
+                          <Text style={styles.subSectionTitle}>
+                            Comentários e Dúvidas ({material.comments.length})
+                          </Text>
+                          <View style={styles.commentsCard}>
+                            {material.comments.length === 0 ? (
+                              <Text style={styles.noCommentsText}>
+                                Nenhum comentário sobre este material ainda.
+                              </Text>
+                            ) : (
+                              material.comments.map((comment) => (
+                                <View key={comment.id} style={styles.commentItem}>
+                                  <View style={styles.commentHeader}>
+                                    <View style={styles.commentAvatar}>
+                                      <FontAwesome5
+                                        name={comment.role === 'TEACHER' ? 'chalkboard-teacher' : 'user'}
+                                        size={11}
+                                        color="#FFF"
+                                      />
+                                    </View>
+                                    <Text style={styles.commentAuthor}>
+                                      {comment.author}{' '}
+                                      {comment.role === 'TEACHER' && (
+                                        <Text style={styles.teacherTag}>(Professor)</Text>
+                                      )}
+                                    </Text>
+                                    <Text style={styles.commentDate}>{comment.date}</Text>
+                                  </View>
+                                  <Text style={styles.commentBody}>{comment.text}</Text>
+                                </View>
+                              ))
+                            )}
+
+                            <View style={styles.commentInputRow}>
+                              <TextInput
+                                style={styles.commentInput}
+                                placeholder="Fazer um comentário ou pergunta..."
+                                placeholderTextColor="#A0AEC0"
+                                value={commentInputs[material.id] || ''}
+                                onChangeText={(txt) =>
+                                  setCommentInputs((prev) => ({ ...prev, [material.id]: txt }))
+                                }
+                              />
+                              <TouchableOpacity
+                                style={styles.sendCommentBtn}
+                                onPress={() => handleAddComment(material.id, false)}
+                              >
+                                <FontAwesome5 name="paper-plane" size={12} color="#FFF" />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+
+                          <View style={styles.cardActionsRow}>
+                            <TouchableOpacity
+                              style={styles.deleteActionBtn}
+                              onPress={() => requestDeleteMaterial(material)}
+                            >
+                              <FontAwesome5 name="trash-alt" size={12} color="#FF4B4B" />
+                              <Text style={styles.deleteActionText}>Excluir Material</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          )}
+        </ScrollView>
+      )}
 
       {/* POP-CONFIRM GLOBAL */}
       <ConfirmModal
@@ -635,9 +779,20 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   backButton: { width: 40, height: 40, justifyContent: 'center' },
+  refreshBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'flex-end' },
   title: { fontSize: 18, fontWeight: 'bold', color: '#2C3A47' },
   scrollContent: { padding: 18, paddingBottom: 60 },
   pageSubtitle: { fontSize: 13, color: '#8CA0B3', marginBottom: 16, lineHeight: 18 },
+  centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  loadingText: { marginTop: 12, fontSize: 15, color: '#8CA0B3', fontWeight: 'bold' },
+  errorText: { fontSize: 15, color: '#4B5563', textAlign: 'center', marginBottom: 16 },
+  retryBtn: {
+    backgroundColor: '#1CB0F6',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  retryBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
 
   tabContainer: {
     flexDirection: 'row',
@@ -800,22 +955,41 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
     paddingVertical: 10,
-    justifyContent: 'space-around',
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#F1F5F9',
   },
-  metricItem: { alignItems: 'center' },
-  metricValue: { fontSize: 15, fontWeight: 'bold', color: '#2C3A47' },
-  metricLabel: { fontSize: 10, color: '#8CA0B3', marginTop: 2 },
-  metricDivider: { width: 1, height: 20, backgroundColor: '#E2E8F0' },
+  metricItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  metricValue: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#2C3A47',
+  },
+  metricLabel: {
+    fontSize: 10,
+    color: '#8CA0B3',
+    fontWeight: 'bold',
+    marginTop: 2,
+    textTransform: 'uppercase',
+  },
+  metricDivider: {
+    width: 1,
+    height: '75%',
+    backgroundColor: '#E2E8F0',
+    alignSelf: 'center',
+  },
 
   materialMetricsRow: {
     flexDirection: 'row',
-    gap: 14,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
   },
   matMetric: {
     flexDirection: 'row',
@@ -824,47 +998,49 @@ const styles = StyleSheet.create({
   },
   matMetricText: {
     fontSize: 11,
-    color: '#8CA0B3',
+    color: '#64748B',
     fontWeight: '600',
   },
 
-  // Conteúdo Expandido
   expandedArea: {
     marginTop: 14,
     paddingTop: 14,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
-    gap: 12,
   },
   instructionBox: {
     backgroundColor: '#F8FAFC',
     padding: 12,
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderLeftWidth: 3,
+    borderLeftColor: '#1CB0F6',
+    marginBottom: 14,
   },
   instructionTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
     color: '#2C3A47',
     marginBottom: 4,
+    textTransform: 'uppercase',
   },
   instructionText: {
     fontSize: 13,
     color: '#4B5563',
     lineHeight: 18,
   },
+
   subSectionTitle: {
     fontSize: 13,
     fontWeight: 'bold',
     color: '#2C3A47',
-    marginTop: 4,
+    marginBottom: 8,
   },
   submissionsCard: {
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    marginBottom: 16,
     overflow: 'hidden',
   },
   submissionRow: {
@@ -872,7 +1048,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#E2E8F0',
     gap: 10,
   },
   studentAvatar: {
@@ -902,9 +1078,11 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 8,
     backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   statusText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 'bold',
   },
   statusCorrect: {
@@ -917,34 +1095,33 @@ const styles = StyleSheet.create({
     color: '#FF9600',
   },
 
-  // Comentários (Estilo Google Classroom)
   commentsCard: {
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    gap: 10,
+    marginBottom: 12,
   },
   noCommentsText: {
     fontSize: 12,
     color: '#8CA0B3',
     fontStyle: 'italic',
-    textAlign: 'center',
-    paddingVertical: 6,
+    marginBottom: 10,
   },
   commentItem: {
     backgroundColor: '#FFF',
-    borderRadius: 10,
     padding: 10,
+    borderRadius: 10,
+    marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#F1F5F9',
   },
   commentHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
     marginBottom: 4,
+    gap: 6,
   },
   commentAvatar: {
     width: 20,
@@ -955,26 +1132,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   commentAuthor: {
+    flex: 1,
     fontSize: 12,
     fontWeight: 'bold',
     color: '#2C3A47',
-    flex: 1,
   },
   teacherTag: {
-    color: '#58CC02',
-    fontWeight: 'bold',
+    color: '#1CB0F6',
+    fontSize: 11,
   },
   commentDate: {
     fontSize: 10,
-    color: '#8CA0B3',
+    color: '#A0AEC0',
   },
   commentBody: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#4B5563',
-    lineHeight: 18,
+    lineHeight: 17,
   },
+
   commentInputRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
     marginTop: 4,
   },
@@ -984,32 +1163,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 10,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    fontSize: 13,
+    fontSize: 12,
     color: '#2C3A47',
   },
   sendCommentBtn: {
-    width: 36,
-    height: 36,
+    width: 34,
+    height: 34,
     borderRadius: 10,
     backgroundColor: '#1CB0F6',
     justifyContent: 'center',
     alignItems: 'center',
-    alignSelf: 'center',
   },
 
   cardActionsRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    marginTop: 4,
   },
   deleteActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1,
+    borderColor: '#FFE4E6',
   },
   deleteActionText: {
     fontSize: 12,
@@ -1017,4 +1198,3 @@ const styles = StyleSheet.create({
     color: '#FF4B4B',
   },
 });
-

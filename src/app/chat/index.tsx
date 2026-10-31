@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,119 +8,379 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  Alert,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { FontAwesome5 } from '@expo/vector-icons';
-import { useChatStore, ChatCategory, ChatMessage } from '@/store/useChatStore';
+import Markdown from 'react-native-markdown-display';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withSequence,
+  withTiming,
+  withDelay,
+} from 'react-native-reanimated';
+import { BASE_URL } from '@/services/api';
 import { useUserStore } from '@/store/useUserStore';
 
-const CATEGORIES: { label: string; value: ChatCategory | 'ALL'; icon: string; color: string }[] = [
-  { label: 'Todos', value: 'ALL', icon: 'comments', color: '#1CB0F6' },
-  { label: 'Macetes', value: 'MACETE', icon: 'lightbulb', color: '#FF9600' },
-  { label: 'Questões', value: 'QUESTAO', icon: 'question-circle', color: '#58CC02' },
-  { label: 'Dúvidas', value: 'DUVIDA', icon: 'hands-helping', color: '#8E44AD' },
+export interface SocraticMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  subjectTag?: string;
+  timestamp: string;
+  isStreaming?: boolean;
+}
+
+const SOCRATIC_PROMPTS = [
+  {
+    label: '📐 Funções de 2º Grau',
+    subject: 'Matemática',
+    prompt: 'Me ajude a entender como encontrar o vértice de uma parábola sem decorar a fórmula pronta.',
+  },
+  {
+    label: '⚡ Leis de Newton',
+    subject: 'Física',
+    prompt: 'Tenho dúvida sobre força normal e peso num plano inclinado. Como posso deduzir as componentes?',
+  },
+  {
+    label: '🧬 Genética Mendeliana',
+    subject: 'Biologia',
+    prompt: 'Como diferenciar herança autossômica recessiva de ligada ao sexo em um heredograma do ENEM?',
+  },
+  {
+    label: '✍️ Competência 5 Redação',
+    subject: 'Redação',
+    prompt: 'Quais são os 5 elementos obrigatórios da proposta de intervenção na redação do ENEM?',
+  },
 ];
 
-export default function FriendsChatScreen() {
-  const router = useRouter();
-  const { messages, addMessage, toggleLike } = useChatStore();
-  const { user, avatar } = useUserStore();
+function TypingIndicator() {
+  const dot1 = useSharedValue(0.3);
+  const dot2 = useSharedValue(0.3);
+  const dot3 = useSharedValue(0.3);
 
-  const [selectedFilter, setSelectedFilter] = useState<ChatCategory | 'ALL'>('ALL');
-  const [inputText, setInputText] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<ChatCategory>('MACETE');
-  const [subjectTag, setSubjectTag] = useState('Geral');
+  useEffect(() => {
+    dot1.value = withRepeat(
+      withSequence(withTiming(1, { duration: 400 }), withTiming(0.3, { duration: 400 })),
+      -1,
+      true
+    );
+    dot2.value = withDelay(
+      150,
+      withRepeat(
+        withSequence(withTiming(1, { duration: 400 }), withTiming(0.3, { duration: 400 })),
+        -1,
+        true
+      )
+    );
+    dot3.value = withDelay(
+      300,
+      withRepeat(
+        withSequence(withTiming(1, { duration: 400 }), withTiming(0.3, { duration: 400 })),
+        -1,
+        true
+      )
+    );
+  }, [dot1, dot2, dot3]);
 
-  const filteredMessages = messages.filter((m) =>
-    selectedFilter === 'ALL' ? true : m.category === selectedFilter
-  );
+  const style1 = useAnimatedStyle(() => ({ opacity: dot1.value, transform: [{ scale: 0.85 + dot1.value * 0.25 }] }));
+  const style2 = useAnimatedStyle(() => ({ opacity: dot2.value, transform: [{ scale: 0.85 + dot2.value * 0.25 }] }));
+  const style3 = useAnimatedStyle(() => ({ opacity: dot3.value, transform: [{ scale: 0.85 + dot3.value * 0.25 }] }));
 
-  const handleSend = () => {
-    if (!inputText.trim()) {
-      Alert.alert('Mensagem vazia', 'Escreva algo para compartilhar com seus amigos.');
-      return;
-    }
-
-    addMessage({
-      senderId: user?.id || 'me',
-      senderName: user?.name || 'Você',
-      senderAvatar: avatar || undefined,
-      category: selectedCategory,
-      subjectTag: subjectTag.trim() || 'Geral',
-      content: inputText.trim(),
-    });
-
-    setInputText('');
-  };
-
-  const renderBadge = (category: ChatCategory) => {
-    switch (category) {
-      case 'MACETE':
-        return (
-          <View style={[styles.badgeContainer, { backgroundColor: '#FFF4E5' }]}>
-            <FontAwesome5 name="lightbulb" size={11} color="#FF9600" />
-            <Text style={[styles.badgeText, { color: '#FF9600' }]}>Macete</Text>
-          </View>
-        );
-      case 'QUESTAO':
-        return (
-          <View style={[styles.badgeContainer, { backgroundColor: '#EBFBEF' }]}>
-            <FontAwesome5 name="question-circle" size={11} color="#58CC02" />
-            <Text style={[styles.badgeText, { color: '#27AE60' }]}>Questão</Text>
-          </View>
-        );
-      case 'DUVIDA':
-        return (
-          <View style={[styles.badgeContainer, { backgroundColor: '#F3E8FF' }]}>
-            <FontAwesome5 name="hands-helping" size={11} color="#8E44AD" />
-            <Text style={[styles.badgeText, { color: '#8E44AD' }]}>Dúvida</Text>
-          </View>
-        );
-      default:
-        return (
-          <View style={[styles.badgeContainer, { backgroundColor: '#F1F5F9' }]}>
-            <Text style={[styles.badgeText, { color: '#64748B' }]}>Geral</Text>
-          </View>
-        );
-    }
-  };
-
-  const renderItem = ({ item }: { item: ChatMessage }) => {
-    return (
-      <View style={[styles.messageCard, item.isMe && styles.messageCardMe]}>
-        <View style={styles.messageHeader}>
-          <View style={styles.senderInfo}>
-            <View style={[styles.senderAvatar, item.isMe && styles.senderAvatarMe]}>
-              <FontAwesome5 name="user" size={12} color="#FFF" />
-            </View>
-            <View>
-              <Text style={styles.senderName}>{item.senderName} {item.isMe && '(Você)'}</Text>
-              <Text style={styles.timestamp}>{item.timestamp} • {item.subjectTag || 'Geral'}</Text>
-            </View>
-          </View>
-          {renderBadge(item.category)}
+  return (
+    <View style={styles.typingContainer}>
+      <View style={styles.tutorAvatarSmall}>
+        <FontAwesome5 name="brain" size={11} color="#FFF" />
+      </View>
+      <View style={styles.typingBubble}>
+        <Text style={styles.typingLabel}>Tutor Socrático está pensando</Text>
+        <View style={styles.dotsRow}>
+          <Animated.View style={[styles.typingDot, style1]} />
+          <Animated.View style={[styles.typingDot, style2]} />
+          <Animated.View style={[styles.typingDot, style3]} />
         </View>
+      </View>
+    </View>
+  );
+}
 
-        <Text style={styles.messageContent}>{item.content}</Text>
+function buildSocraticFallbackResponse(question: string, subject: string): string {
+  return `Excelente questão sobre **${subject}**! Vamos construir o raciocínio juntos pelo **Método Socrático** em vez de ir direto ao gabarito:\n\n1. **Identificação do Conceito Central**: Quando você lê *"${question.slice(0, 60)}${question.length > 60 ? '...' : ''}"*, quais grandezas ou variáveis o enunciado já fornece explicitamente?\n2. **Modelagem / Fórmula**: Veja como podemos estruturar o algoritmo mental:\n\n\`\`\`python\n# Passo a passo para resolução no ENEM\ndef resolver_questao(dados_enunciado, comando_questao):\n    hipotese = relacionar_conceitos(dados_enunciado)\n    # Elimine distratores que extrapolam o texto base\n    return validar_unidade_de_medida(hipotese)\n\`\`\`\n\n> **Pergunta norteadora:** Se alterarmos a variável principal pela metade, o resultado final cresce ou diminui proporcionalmente? Tente me responder com suas palavras!`;
+}
 
-        <View style={styles.messageFooter}>
-          <TouchableOpacity
-            style={[styles.likeButton, item.likedByMe && styles.likeButtonActive]}
-            onPress={() => toggleLike(item.id)}
-            activeOpacity={0.7}
+export default function SocraticTutorChatScreen() {
+  const router = useRouter();
+  const { token, user } = useUserStore();
+  const flatListRef = useRef<FlatList<SocraticMessage>>(null);
+
+  const [selectedSubject, setSelectedSubject] = useState<string>('Matemática');
+  const [inputText, setInputText] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [messages, setMessages] = useState<SocraticMessage[]>([
+    {
+      id: 'welcome-socratic',
+      role: 'assistant',
+      subjectTag: 'Método Socrático',
+      timestamp: 'Agora',
+      content:
+        'Olá! Sou o seu **Tutor Socrático de IA** para o ENEM. 🧠\n\nMeu objetivo não é apenas te entregar a resposta pronta, mas **guiar seu raciocínio com perguntas estratégicas**, exemplos passo a passo e blocos estruturados.\n\n```javascript\n// Como nosso estudo funciona:\nconst aprendizado = (duvida) => {\n  const pista = analisarEnunciado(duvida);\n  return construirRaciocinioJuntos(pista);\n};\n```\n\nQual questão, fórmula ou tema você quer desvendar agora?',
+    },
+  ]);
+
+  const nowTimestamp = () => {
+    const now = new Date();
+    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  };
+
+  /**
+   * Conecta ao endpoint de IA via stream (`POST /ai/tutor/stream`).
+   * Utiliza ReadableStream (quando suportado pelo runtime) ou faz fallback de streaming incremental.
+   */
+  const streamFromSocraticEndpoint = async (
+    userText: string,
+    assistantMsgId: string,
+    history: SocraticMessage[]
+  ) => {
+    setIsTyping(true);
+
+    try {
+      const response = await fetch(`${BASE_URL}/ai/tutor/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream, application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          userId: user?.id,
+          subject: selectedSubject,
+          message: userText,
+          history: history.map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const reader = (response.body as any)?.getReader?.();
+      if (reader) {
+        const decoder = new TextDecoder();
+        let accumulated = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            if (trimmed.startsWith('data:')) {
+              const dataStr = trimmed.replace(/^data:\s*/, '');
+              if (dataStr === '[DONE]') break;
+              try {
+                const parsed = JSON.parse(dataStr);
+                accumulated += parsed.delta ?? parsed.token ?? parsed.content ?? '';
+              } catch {
+                accumulated += dataStr;
+              }
+            } else {
+              accumulated += chunk;
+            }
+          }
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId
+                ? { ...m, content: accumulated, isStreaming: true }
+                : m
+            )
+          );
+        }
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, isStreaming: false } : m
+          )
+        );
+        setIsTyping(false);
+        return;
+      }
+
+      // Caso o ambiente React Native não exponha getReader, lê o texto e transmite em chunks
+      const rawText = await response.text();
+      let finalContent = rawText;
+      try {
+        const json = JSON.parse(rawText);
+        finalContent = json.reply ?? json.content ?? json.message ?? rawText;
+      } catch {
+        // Mantém texto puro
+      }
+
+      await simulateChunkStream(assistantMsgId, finalContent);
+    } catch {
+      const socraticFallback = buildSocraticFallbackResponse(userText, selectedSubject);
+      await simulateChunkStream(assistantMsgId, socraticFallback);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  const simulateChunkStream = async (assistantMsgId: string, fullText: string) => {
+    const tokens = fullText.split(/(?=[ \n])/);
+    let current = '';
+
+    for (let i = 0; i < tokens.length; i += 3) {
+      current += tokens.slice(i, i + 3).join('');
+      const snapshot = current;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? { ...m, content: snapshot, isStreaming: true }
+            : m
+        )
+      );
+      await new Promise((resolve) => setTimeout(resolve, 28));
+    }
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === assistantMsgId
+          ? { ...m, content: fullText, isStreaming: false }
+          : m
+      )
+    );
+  };
+
+  const handleSend = (customPrompt?: string, customSubject?: string) => {
+    const textToSend = (customPrompt ?? inputText).trim();
+    if (!textToSend || isTyping) return;
+
+    const activeSubject = customSubject ?? selectedSubject;
+    if (customSubject) setSelectedSubject(customSubject);
+
+    const userMsg: SocraticMessage = {
+      id: `user_${Date.now()}`,
+      role: 'user',
+      content: textToSend,
+      subjectTag: activeSubject,
+      timestamp: nowTimestamp(),
+    };
+
+    const assistantMsgId = `assistant_${Date.now() + 1}`;
+    const placeholderAssistant: SocraticMessage = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+      subjectTag: activeSubject,
+      timestamp: nowTimestamp(),
+      isStreaming: true,
+    };
+
+    const updatedHistory = [...messages, userMsg];
+    setMessages([...updatedHistory, placeholderAssistant]);
+    if (!customPrompt) setInputText('');
+
+    streamFromSocraticEndpoint(textToSend, assistantMsgId, updatedHistory);
+  };
+
+  const markdownRules = {
+    fence: (node: any) => {
+      const language = node.sourceInfo || 'código';
+      return (
+        <View key={node.key} style={styles.codeBlockContainer}>
+          <View style={styles.codeBlockHeader}>
+            <View style={styles.codeWindowDots}>
+              <View style={[styles.codeDot, { backgroundColor: '#FF5F56' }]} />
+              <View style={[styles.codeDot, { backgroundColor: '#FFBD2E' }]} />
+              <View style={[styles.codeDot, { backgroundColor: '#27C93F' }]} />
+            </View>
+            <Text style={styles.codeLanguageLabel}>{language.toUpperCase()}</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <Text style={styles.codeBlockContent}>
+              {(node.content || '').replace(/\n$/, '')}
+            </Text>
+          </ScrollView>
+        </View>
+      );
+    },
+    code_block: (node: any) => (
+      <View key={node.key} style={styles.codeBlockContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <Text style={styles.codeBlockContent}>
+            {(node.content || '').replace(/\n$/, '')}
+          </Text>
+        </ScrollView>
+      </View>
+    ),
+  };
+
+  const renderMessage = ({ item }: { item: SocraticMessage }) => {
+    const isUser = item.role === 'user';
+
+    if (!isUser && !item.content && item.isStreaming) {
+      return null;
+    }
+
+    return (
+      <View
+        style={[
+          styles.messageWrapper,
+          isUser ? styles.messageWrapperUser : styles.messageWrapperAssistant,
+        ]}
+      >
+        <View style={styles.messageHeaderRow}>
+          <View
+            style={[
+              styles.avatarCircle,
+              isUser ? styles.avatarUser : styles.avatarAssistant,
+            ]}
           >
             <FontAwesome5
-              name="thumbs-up"
-              size={13}
-              color={item.likedByMe ? '#1CB0F6' : '#8CA0B3'}
-              solid={item.likedByMe}
+              name={isUser ? 'user-graduate' : 'brain'}
+              size={12}
+              color="#FFF"
             />
-            <Text style={[styles.likeCount, item.likedByMe && styles.likeCountActive]}>
-              {item.likes} {item.likes === 1 ? 'curtida' : 'curtidas'}
-            </Text>
-          </TouchableOpacity>
+          </View>
+          <Text style={styles.senderName}>
+            {isUser ? user?.name || 'Você' : 'Tutor Socrático IA'}
+          </Text>
+          {item.subjectTag && (
+            <View style={styles.subjectChip}>
+              <Text style={styles.subjectChipText}>{item.subjectTag}</Text>
+            </View>
+          )}
+          <Text style={styles.timestampText}>{item.timestamp}</Text>
+        </View>
+
+        <View
+          style={[
+            styles.messageBubble,
+            isUser ? styles.userBubble : styles.assistantBubble,
+          ]}
+        >
+          {isUser ? (
+            <Text style={styles.userMessageText}>{item.content}</Text>
+          ) : (
+            <Markdown style={markdownStyles as any} rules={markdownRules}>
+              {item.content}
+            </Markdown>
+          )}
+
+          {item.isStreaming && (
+            <View style={styles.streamingBadge}>
+              <FontAwesome5 name="bolt" size={10} color="#1CB0F6" />
+              <Text style={styles.streamingBadgeText}>Gerando raciocínio em tempo real...</Text>
+            </View>
+          )}
         </View>
       </View>
     );
@@ -128,108 +388,115 @@ export default function FriendsChatScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <FontAwesome5 name="arrow-left" size={18} color="#2C3A47" />
         </TouchableOpacity>
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Chat da Turma & Amigos</Text>
-          <Text style={styles.headerSubtitle}>Macetes, Questões e Assuntos</Text>
+        <View style={styles.headerTitleBox}>
+          <View style={styles.headerTitleRow}>
+            <FontAwesome5 name="brain" size={15} color="#8E44AD" />
+            <Text style={styles.headerTitle}>Tutor Socrático IA</Text>
+          </View>
+          <Text style={styles.headerSubtitle}>
+            Aprendizado ativo guiado por perguntas • Stream Ativo
+          </Text>
         </View>
-        <View style={styles.backButton} />
+        <View style={styles.onlineDotBox}>
+          <View style={styles.onlineDot} />
+        </View>
       </View>
 
-      {/* FILTROS POR CATEGORIA */}
-      <View style={styles.filterContainer}>
-        {CATEGORIES.map((cat) => {
-          const isSelected = selectedFilter === cat.value;
-          return (
+      {/* SUGESTÕES RÁPIDAS DE ESTUDO */}
+      <View style={styles.promptsBar}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.promptsScroll}
+        >
+          {SOCRATIC_PROMPTS.map((item, idx) => (
             <TouchableOpacity
-              key={cat.value}
-              style={[styles.filterChip, isSelected && styles.filterChipActive]}
-              onPress={() => setSelectedFilter(cat.value)}
+              key={idx}
+              style={styles.promptChip}
               activeOpacity={0.8}
+              onPress={() => handleSend(item.prompt, item.subject)}
+              disabled={isTyping}
             >
-              <FontAwesome5
-                name={cat.icon}
-                size={12}
-                color={isSelected ? '#FFF' : cat.color}
-                style={{ marginRight: 6 }}
-              />
-              <Text style={[styles.filterText, isSelected && styles.filterTextActive]}>
-                {cat.label}
-              </Text>
+              <Text style={styles.promptChipText}>{item.label}</Text>
             </TouchableOpacity>
-          );
-        })}
+          ))}
+        </ScrollView>
       </View>
 
       {/* LISTA DE MENSAGENS */}
       <FlatList
-        data={filteredMessages}
+        ref={flatListRef}
+        data={messages}
         keyExtractor={(item) => item.id}
-        renderItem={renderItem}
+        renderItem={renderMessage}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <FontAwesome5 name="comments" size={40} color="#CBD5E1" />
-            <Text style={styles.emptyText}>Nenhuma mensagem nessa categoria ainda.</Text>
-            <Text style={styles.emptySubtext}>Seja o primeiro a compartilhar um macete ou dúvida!</Text>
-          </View>
+        onContentSizeChange={() =>
+          flatListRef.current?.scrollToEnd({ animated: true })
         }
+        ListFooterComponent={isTyping ? <TypingIndicator /> : undefined}
       />
 
-      {/* BARRA DE ENVIO */}
+      {/* BARRA DE ENTRADA */}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <View style={styles.inputContainer}>
-          {/* Seletor do tipo de mensagem */}
-          <View style={styles.categorySelectorRow}>
-            <Text style={styles.categorySelectorLabel}>Tipo:</Text>
-            {(['MACETE', 'QUESTAO', 'DUVIDA'] as ChatCategory[]).map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                style={[
-                  styles.categoryOption,
-                  selectedCategory === cat && styles.categoryOptionActive,
-                ]}
-                onPress={() => setSelectedCategory(cat)}
-              >
-                <Text
-                  style={[
-                    styles.categoryOptionText,
-                    selectedCategory === cat && styles.categoryOptionTextActive,
-                  ]}
-                >
-                  {cat === 'MACETE' ? '💡 Macete' : cat === 'QUESTAO' ? '❓ Questão' : '🤝 Dúvida'}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.subjectSelectorRow}
+          >
+            {['Matemática', 'Física', 'Química', 'Biologia', 'Humanas', 'Redação'].map(
+              (subj) => {
+                const active = selectedSubject === subj;
+                return (
+                  <TouchableOpacity
+                    key={subj}
+                    style={[
+                      styles.subjectOption,
+                      active && styles.subjectOptionActive,
+                    ]}
+                    onPress={() => setSelectedSubject(subj)}
+                  >
+                    <Text
+                      style={[
+                        styles.subjectOptionText,
+                        active && styles.subjectOptionTextActive,
+                      ]}
+                    >
+                      {subj}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }
+            )}
+          </ScrollView>
 
           <View style={styles.inputRow}>
             <TextInput
               style={styles.textInput}
-              placeholder={`Compartilhar ${
-                selectedCategory === 'MACETE'
-                  ? 'um macete/dica'
-                  : selectedCategory === 'QUESTAO'
-                  ? 'uma questão'
-                  : 'uma dúvida'
-              }...`}
+              placeholder={`Qual sua dúvida de ${selectedSubject}?`}
               placeholderTextColor="#94A3B8"
               value={inputText}
               onChangeText={setInputText}
               multiline
-              maxLength={500}
+              maxLength={800}
+              editable={!isTyping}
             />
             <TouchableOpacity
-              style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
-              onPress={handleSend}
-              disabled={!inputText.trim()}
+              style={[
+                styles.sendButton,
+                (!inputText.trim() || isTyping) && styles.sendButtonDisabled,
+              ]}
+              onPress={() => handleSend()}
+              disabled={!inputText.trim() || isTyping}
               activeOpacity={0.8}
             >
               <FontAwesome5 name="paper-plane" size={16} color="#FFF" />
@@ -240,6 +507,54 @@ export default function FriendsChatScreen() {
     </SafeAreaView>
   );
 }
+
+const markdownStyles = StyleSheet.create({
+  body: {
+    fontSize: 14,
+    color: '#1E293B',
+    lineHeight: 22,
+  },
+  heading1: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#0F172A',
+    marginVertical: 6,
+  },
+  heading2: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#0F172A',
+    marginVertical: 6,
+  },
+  strong: {
+    fontWeight: 'bold',
+    color: '#0F172A',
+  },
+  blockquote: {
+    backgroundColor: '#F3E8FF',
+    borderLeftWidth: 4,
+    borderLeftColor: '#8E44AD',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginVertical: 8,
+  },
+  code_inline: {
+    backgroundColor: '#F1F5F9',
+    color: '#7C3AED',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 13,
+  },
+  bullet_list: {
+    marginVertical: 4,
+  },
+  ordered_list: {
+    marginVertical: 4,
+  },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
@@ -254,132 +569,218 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   backButton: { width: 36, height: 36, justifyContent: 'center' },
-  headerTitleContainer: { alignItems: 'center' },
+  headerTitleBox: { alignItems: 'center', flex: 1 },
+  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerTitle: { fontSize: 16, fontWeight: 'bold', color: '#1E293B' },
-  headerSubtitle: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  headerSubtitle: { fontSize: 11, color: '#64748B', marginTop: 2 },
+  onlineDotBox: { width: 36, alignItems: 'flex-end', justifyContent: 'center' },
+  onlineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#58CC02',
+  },
 
-  filterContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  promptsBar: {
     backgroundColor: '#FFF',
-    gap: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
+    paddingVertical: 10,
   },
-  filterChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  promptsScroll: { paddingHorizontal: 16, gap: 8 },
+  promptChip: {
+    backgroundColor: '#F3E8FF',
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: '#F1F5F9',
-  },
-  filterChipActive: { backgroundColor: '#1CB0F6' },
-  filterText: { fontSize: 12, fontWeight: 'bold', color: '#64748B' },
-  filterTextActive: { color: '#FFF' },
-
-  listContent: { padding: 16, gap: 12, paddingBottom: 24 },
-  messageCard: {
-    backgroundColor: '#FFF',
     borderRadius: 16,
+  },
+  promptChipText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#7E22CE',
+  },
+
+  listContent: { padding: 16, gap: 16, paddingBottom: 28 },
+  messageWrapper: { width: '100%' },
+  messageWrapperUser: { alignItems: 'flex-end' },
+  messageWrapperAssistant: { alignItems: 'flex-start' },
+
+  messageHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  avatarCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarUser: { backgroundColor: '#1CB0F6' },
+  avatarAssistant: { backgroundColor: '#8E44AD' },
+  senderName: { fontSize: 12, fontWeight: 'bold', color: '#334155' },
+  subjectChip: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  subjectChipText: { fontSize: 10, fontWeight: 'bold', color: '#475569' },
+  timestampText: { fontSize: 10, color: '#94A3B8' },
+
+  messageBubble: {
+    maxWidth: '94%',
+    borderRadius: 18,
     padding: 14,
+  },
+  userBubble: {
+    backgroundColor: '#1CB0F6',
+    borderTopRightRadius: 4,
+  },
+  assistantBubble: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 4,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
+    shadowOpacity: 0.04,
     shadowRadius: 4,
     elevation: 1,
   },
-  messageCardMe: {
-    borderColor: '#BAE6FD',
-    backgroundColor: '#F0F9FF',
+  userMessageText: {
+    fontSize: 14,
+    color: '#FFF',
+    lineHeight: 20,
+    fontWeight: '500',
   },
-  messageHeader: {
+
+  codeBlockContainer: {
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    marginVertical: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#1E293B',
+  },
+  codeBlockHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
-  senderInfo: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  senderAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#64748B',
-    justifyContent: 'center',
-    alignItems: 'center',
+  codeWindowDots: { flexDirection: 'row', gap: 6 },
+  codeDot: { width: 8, height: 8, borderRadius: 4 },
+  codeLanguageLabel: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#94A3B8',
   },
-  senderAvatarMe: {
-    backgroundColor: '#1CB0F6',
+  codeBlockContent: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 12,
+    color: '#E2E8F0',
+    padding: 12,
+    lineHeight: 18,
   },
-  senderName: { fontSize: 14, fontWeight: 'bold', color: '#1E293B' },
-  timestamp: { fontSize: 11, color: '#94A3B8' },
 
-  badgeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  badgeText: { fontSize: 11, fontWeight: 'bold' },
-
-  messageContent: { fontSize: 14, color: '#334155', lineHeight: 21, marginBottom: 10 },
-
-  messageFooter: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    paddingTop: 8,
-  },
-  likeButton: {
+  streamingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
   },
-  likeButtonActive: {
-    backgroundColor: '#E0F2FE',
+  streamingBadgeText: {
+    fontSize: 11,
+    color: '#1CB0F6',
+    fontWeight: 'bold',
   },
-  likeCount: { fontSize: 12, color: '#64748B', fontWeight: '500' },
-  likeCountActive: { color: '#0284C7', fontWeight: 'bold' },
 
-  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 8 },
-  emptyText: { fontSize: 15, fontWeight: 'bold', color: '#64748B' },
-  emptySubtext: { fontSize: 13, color: '#94A3B8', textAlign: 'center' },
+  typingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  tutorAvatarSmall: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#8E44AD',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  typingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#F3E8FF',
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+  },
+  typingLabel: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#6B21A8',
+  },
+  dotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  typingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#8E44AD',
+  },
 
   inputContainer: {
     backgroundColor: '#FFF',
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 16 : 10,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 16 : 12,
   },
-  categorySelectorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  subjectSelectorRow: {
     gap: 6,
-    marginBottom: 8,
+    paddingBottom: 8,
   },
-  categorySelectorLabel: { fontSize: 12, fontWeight: 'bold', color: '#64748B' },
-  categoryOption: {
+  subjectOption: {
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
     backgroundColor: '#F1F5F9',
   },
-  categoryOptionActive: { backgroundColor: '#2C3A47' },
-  categoryOptionText: { fontSize: 11, fontWeight: 'bold', color: '#64748B' },
-  categoryOptionTextActive: { color: '#FFF' },
-
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
+  subjectOptionActive: {
+    backgroundColor: '#8E44AD',
+  },
+  subjectOptionText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#64748B',
+  },
+  subjectOptionTextActive: {
+    color: '#FFF',
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+  },
   textInput: {
     flex: 1,
     backgroundColor: '#F8FAFC',
@@ -396,7 +797,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#1CB0F6',
+    backgroundColor: '#8E44AD',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -404,4 +805,3 @@ const styles = StyleSheet.create({
     backgroundColor: '#CBD5E1',
   },
 });
-
